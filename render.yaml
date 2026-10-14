@@ -1,0 +1,18 @@
+# Opcional: o serviço também pode ser criado manualmente no painel do Render.
+services:
+  - type: web
+    name: aldemar-english
+    runtime: node
+    plan: free
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: SESSION_SECRET
+        generateValue: true
+      - key: CHAVE_PROFESSOR
+        sync: false
+      - key: DATABASE_URL
+        sync: false
