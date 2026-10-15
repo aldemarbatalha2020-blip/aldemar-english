@@ -20,6 +20,7 @@ async function q(sql, params = []) {
 }
 
 const ID = isPg ? 'BIGSERIAL PRIMARY KEY' : 'INTEGER PRIMARY KEY AUTOINCREMENT';
+const BLOB = isPg ? 'BYTEA' : 'BLOB';
 
 async function iniciar() {
   await q(`CREATE TABLE IF NOT EXISTS usuarios (
@@ -39,6 +40,32 @@ async function iniciar() {
     codigo TEXT PRIMARY KEY, dias INTEGER NOT NULL, criado BIGINT NOT NULL, usado_por BIGINT NOT NULL DEFAULT 0, usado_em BIGINT NOT NULL DEFAULT 0)`);
   await q(`CREATE TABLE IF NOT EXISTS denuncias (
     id ${ID}, msg BIGINT NOT NULL, por BIGINT NOT NULL, criado BIGINT NOT NULL)`);
+  await q(`CREATE TABLE IF NOT EXISTS midias (
+    id ${ID}, dono BIGINT NOT NULL, mime TEXT NOT NULL, dados ${BLOB} NOT NULL, tam BIGINT NOT NULL DEFAULT 0,
+    contexto TEXT NOT NULL, estado TEXT NOT NULL DEFAULT 'pendente', usada INTEGER NOT NULL DEFAULT 0, criado BIGINT NOT NULL)`);
+  await q(`CREATE TABLE IF NOT EXISTS posts (
+    id ${ID}, dono BIGINT NOT NULL, legenda TEXT NOT NULL DEFAULT '', midia BIGINT NOT NULL, tipo TEXT NOT NULL,
+    estado TEXT NOT NULL DEFAULT 'pendente', ocultar INTEGER NOT NULL DEFAULT 0, curtidas INTEGER NOT NULL DEFAULT 0, criado BIGINT NOT NULL)`);
+  await q('CREATE TABLE IF NOT EXISTS curtidas (post BIGINT NOT NULL, usuario BIGINT NOT NULL, PRIMARY KEY (post, usuario))');
+  await q(`CREATE TABLE IF NOT EXISTS comentarios (
+    id ${ID}, post BIGINT NOT NULL, de BIGINT NOT NULL, texto TEXT NOT NULL, criado BIGINT NOT NULL, apagada INTEGER NOT NULL DEFAULT 0)`);
+  await q(`CREATE TABLE IF NOT EXISTS push_subs (
+    endpoint TEXT PRIMARY KEY, usuario BIGINT NOT NULL, p256dh TEXT NOT NULL, auth TEXT NOT NULL, geral INTEGER NOT NULL DEFAULT 0, criado BIGINT NOT NULL)`);
+  // Colunas novas em bancos que já existiam (erro "já existe" é ignorado)
+  const novas = [
+    "ALTER TABLE usuarios ADD COLUMN foto BIGINT NOT NULL DEFAULT 0",
+    "ALTER TABLE usuarios ADD COLUMN foto_pend BIGINT NOT NULL DEFAULT 0",
+    "ALTER TABLE usuarios ADD COLUMN aceitou BIGINT NOT NULL DEFAULT 0",
+    "ALTER TABLE mensagens ADD COLUMN tipo TEXT NOT NULL DEFAULT 'texto'",
+    "ALTER TABLE mensagens ADD COLUMN midia BIGINT NOT NULL DEFAULT 0",
+    "ALTER TABLE denuncias ADD COLUMN alvo TEXT NOT NULL DEFAULT 'msg'",
+    "ALTER TABLE denuncias ADD COLUMN motivo TEXT NOT NULL DEFAULT ''",
+    "ALTER TABLE denuncias ADD COLUMN detalhe TEXT NOT NULL DEFAULT ''",
+    "ALTER TABLE denuncias ADD COLUMN resolvida INTEGER NOT NULL DEFAULT 0",
+  ];
+  for (const sql of novas) { try { await q(sql); } catch (e) { /* coluna já existe */ } }
+  await q('CREATE INDEX IF NOT EXISTS ix_posts ON posts (estado, id)');
+  await q('CREATE INDEX IF NOT EXISTS ix_com_post ON comentarios (post, id)');
   await q('CREATE INDEX IF NOT EXISTS ix_msg_para ON mensagens (para, id)');
   await q('CREATE INDEX IF NOT EXISTS ix_msg_de ON mensagens (de, id)');
   await q('CREATE INDEX IF NOT EXISTS ix_xp ON usuarios (xp_semana)');
