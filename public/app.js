@@ -457,7 +457,7 @@
             }).catch(falha);
           } }, 'Gerar códigos'), novos,
           p.codigos.filter(function (k) { return !k.usado; }).length ? h('div', {}, h('p', { class: 'mudo peq' }, 'Disponíveis (ainda não usados):'), p.codigos.filter(function (k) { return !k.usado; }).map(function (k) { return h('span', { class: 'codigo', title: k.dias + ' dias' }, k.codigo); })) : null));
-        area.append(M().mod.cartaoPendentes(p, carregar), M().mod.cartaoDenuncias(p, carregar), M().desafios.cartaoProfessor(), M().mod.cartaoArmazenamento(p));
+        area.append(M().mod.cartaoPendentes(p, carregar), M().mod.cartaoDenuncias(p, carregar), M().live.cartaoPainel(p), M().desafios.cartaoProfessor(), M().mod.cartaoArmazenamento(p));
         area.append(h('div', { class: 'card' }, h('h3', {}, 'Alunos (' + p.alunos.length + ')'),
           p.alunos.map(function (a) {
             return h('div', { class: 'tabela-p' },
@@ -685,6 +685,8 @@
   // abre uma tela a partir do endereço (#dm-5, #posts...) — usado pelas notificações
   function irPara(hash) {
     if (!U || !hash) return;
+    var ml = /^#live-(\d+)$/.exec(hash);
+    if (ml) { M().live.entrar(Number(ml[1])); history.replaceState(null, '', location.pathname); return; }
     var mp = /^#post-(\d+)$/.exec(hash), mv = /^#perfil-(\d+)$/.exec(hash);
     if (mp) { M().posts.abrirPorId(mp[1]); history.replaceState(null, '', location.pathname); return; }
     if (mv) { abrirPerfil(Number(mv[1])); history.replaceState(null, '', location.pathname); return; }

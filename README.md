@@ -24,6 +24,11 @@ Node + Postgres (`pg`). Sem frameworks no servidor.
 - Chamadas usam WebRTC com servidores STUN gratuitos. Para redes difíceis (4G de algumas operadoras), defina `TURN_URL`, `TURN_USER`, `TURN_PASS` (ex.: um serviço TURN gratuito/pago).
 - Desafios do dia/semana automáticos + desafios criados pelo professor (moedas de recompensa).
 
+## Live (LiveKit Cloud)
+- Variáveis: `LIVEKIT_URL` (wss://...), `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET`. Sem elas a live fica desativada.
+- Só o professor e alunos ⭐ de confiança transmitem. Espectadores só assistem; chat próprio com filtro; denúncia com motivo (3 denúncias encerram a live); professor encerra ou remove espectadores.
+- Plano gratuito do LiveKit: 5.000 min de participante e 50 GB por mês. O painel mostra uma estimativa de uso.
+
 ## Plano Pro
 Energia ilimitada. O professor gera códigos no painel (30/90/180/365 dias) e o aluno resgata no Perfil.
 Não há cobrança automática: o pagamento (ex.: Pix) é combinado fora do app.

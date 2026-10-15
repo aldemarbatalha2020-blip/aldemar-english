@@ -746,14 +746,15 @@ rota('POST', '/api/denunciar', async (c) => {
   const u = await exigirLogin(c.req);
   limitar('den:' + u.id, 15, 3600000);
   const alvo = String(c.corpo.alvo || 'msg'), id = Number(c.corpo.id || c.corpo.msg), motivo = String(c.corpo.motivo || '');
-  if (!['msg', 'post', 'comentario', 'perfil'].includes(alvo)) throw erro(400, 'O que você quer denunciar?');
+  if (!['msg', 'post', 'comentario', 'perfil', 'live'].includes(alvo)) throw erro(400, 'O que você quer denunciar?');
   if (!MOTIVOS[motivo]) throw erro(400, 'Escolha o motivo da denúncia');
   const detalhe = String(c.corpo.detalhe || '').replace(/\s+/g, ' ').trim().slice(0, 300);
   if (motivo === 'outro' && detalhe.length < 5) throw erro(400, 'Explique o motivo da denúncia');
   const existe = alvo === 'msg' ? await q('SELECT de AS dono FROM mensagens WHERE id=$1', [id])
     : alvo === 'post' ? await q('SELECT dono FROM posts WHERE id=$1', [id])
       : alvo === 'comentario' ? await q('SELECT de AS dono FROM comentarios WHERE id=$1', [id])
-        : await q('SELECT id AS dono FROM usuarios WHERE id=$1', [id]);
+        : alvo === 'live' ? await q('SELECT dono FROM lives WHERE id=$1', [id])
+          : await q('SELECT id AS dono FROM usuarios WHERE id=$1', [id]);
   if (!existe.length) throw erro(404, 'Conteúdo não encontrado');
   if (existe[0].dono === u.id) throw erro(400, 'Você não pode denunciar o seu próprio conteúdo');
   if ((await q('SELECT id FROM denuncias WHERE por=$1 AND alvo=$2 AND msg=$3 AND resolvida=0', [u.id, alvo, id])).length) throw erro(400, 'Você já denunciou isto');
@@ -764,6 +765,7 @@ rota('POST', '/api/denunciar', async (c) => {
     if (alvo === 'msg') await q('UPDATE mensagens SET apagada=3 WHERE id=$1 AND apagada=0', [id]);
     if (alvo === 'post') await q('UPDATE posts SET ocultar=1 WHERE id=$1', [id]);
     if (alvo === 'comentario') await q('UPDATE comentarios SET apagada=3 WHERE id=$1 AND apagada=0', [id]);
+    if (alvo === 'live') await encerrarLive(id);
   }
   notificarProfessores({ titulo: '🚩 Nova denúncia', corpo: MOTIVOS[motivo], url: '#painel', tag: 'denuncia' });
   return { ok: true };
@@ -789,6 +791,7 @@ rota('GET', '/api/professor/painel', async (c) => {
     let conteudo = null, autorId = 0, estado = 0;
     if (g.alvo === 'msg') { const m = (await q('SELECT * FROM mensagens WHERE id=$1', [g.id]))[0]; if (m) { conteudo = { tipo: m.tipo, texto: m.texto, midia: m.midia }; autorId = m.de; estado = m.apagada; } }
     else if (g.alvo === 'post') { const p = (await q('SELECT * FROM posts WHERE id=$1', [g.id]))[0]; if (p) { conteudo = { tipo: p.tipo, texto: p.legenda, midia: p.midia }; autorId = p.dono; estado = p.estado === 'removido' ? 1 : (p.ocultar ? 3 : 0); } }
+    else if (g.alvo === 'live') { const l = (await q('SELECT * FROM lives WHERE id=$1', [g.id]))[0]; if (l) { conteudo = { tipo: 'texto', texto: '🔴 Live: ' + l.titulo }; autorId = l.dono; estado = l.estado === 'ao_vivo' ? 0 : 1; } }
     else if (g.alvo === 'comentario') { const m = (await q('SELECT * FROM comentarios WHERE id=$1', [g.id]))[0]; if (m) { conteudo = { tipo: 'texto', texto: m.texto }; autorId = m.de; estado = m.apagada; } }
     else { const d = await usuarioPorId(g.id); if (d) { conteudo = { tipo: 'foto', texto: '', midia: d.foto || d.foto_pend }; autorId = d.id; } }
     const autor = autorId ? await usuarioPorId(autorId) : null;
@@ -797,7 +800,7 @@ rota('GET', '/api/professor/painel', async (c) => {
   return {
     alunos: alunos.map((a) => ({ id: a.id, nome: a.nome, avatar: a.avatar, xp: a.xp, pro: pro(a), proAte: a.pro_ate, banido: !!a.banido, confiavel: !!a.confiavel, streak: sequencia(a), visto: a.visto, criado: a.criado })),
     codigos: codigos.map((k) => ({ codigo: k.codigo, dias: k.dias, usado: !!k.usado_por })),
-    pendentes, denuncias, armazenamento: { usado: await usoArmazenamento(), limite: LIM_ARMAZ },
+    pendentes, denuncias, armazenamento: { usado: await usoArmazenamento(), limite: LIM_ARMAZ }, live: { ativa: LIVE_ATIVA, usadoMin: await usoLiveMin(), limiteMin: LK_LIMITE_MIN },
   };
 });
 rota('POST', '/api/professor/aprovar', async (c) => {
@@ -830,6 +833,7 @@ rota('POST', '/api/professor/moderar', async (c) => {
     if (alvo === 'msg') await q('UPDATE mensagens SET apagada=1 WHERE id=$1', [id]);
     else if (alvo === 'comentario') await q('UPDATE comentarios SET apagada=1 WHERE id=$1', [id]);
     else if (alvo === 'post') { const p = (await q('SELECT * FROM posts WHERE id=$1', [id]))[0]; if (p) { await q("UPDATE posts SET estado='removido' WHERE id=$1", [id]); await liberarMidia(p.midia); } }
+    else if (alvo === 'live') await encerrarLive(id);
     else if (alvo === 'perfil') { const d = await usuarioPorId(id); if (d) { await liberarMidia(d.foto); await liberarMidia(d.foto_pend); await q('UPDATE usuarios SET foto=0, foto_pend=0 WHERE id=$1', [id]); } }
   } else {
     if (alvo === 'msg') await q('UPDATE mensagens SET apagada=0 WHERE id=$1 AND apagada=3', [id]);
@@ -923,7 +927,7 @@ rota('POST', '/api/professor/confiavel', async (c) => {
 });
 
 // ---------- desafios e metas ----------
-const METRICAS = { xp: 'pontos', missao: 'missões', post: 'posts publicados', comentario: 'comentários', curtida: 'curtidas dadas', seguir: 'pessoas seguidas' };
+const METRICAS = { xp: 'pontos', missao: 'missões', post: 'posts publicados', comentario: 'comentários', curtida: 'curtidas dadas', seguir: 'pessoas seguidas', live_min: 'minutos assistindo lives', live_pico60: 'espectadores numa live de 1h' };
 function inicioSemana(t = agora()) { return semanaId(t) * 7 * DIA_MS + 4 * DIA_MS + 3 * 3600000; }
 function inicioDia(t = agora()) { return Date.parse(diaStr(t) + 'T00:00:00Z') + 3 * 3600000; }
 function desafiosFixos() {
@@ -939,10 +943,12 @@ function desafiosFixos() {
   ];
 }
 async function progressoDesafio(uid, d) {
+  if (d.metrica === 'live_pico60') return Number((await q("SELECT COALESCE(MAX(pico),0) AS n FROM lives WHERE dono=$1 AND estado='encerrada' AND inicio>=$2 AND inicio<$3 AND fim-inicio>=3600000", [uid, d.ini, d.fim]))[0].n);
   return Number((await q('SELECT COALESCE(SUM(valor),0) AS n FROM eventos WHERE usuario=$1 AND tipo=$2 AND criado>=$3 AND criado<$4', [uid, d.metrica, d.ini, d.fim]))[0].n);
 }
 async function todosDesafios() {
   const fixos = desafiosFixos();
+  if ((await q('SELECT 1 AS x FROM lives WHERE inicio>=$1 LIMIT 1', [inicioSemana()])).length) fixos.push({ chave: 's' + semanaId() + ':livemin15', tipo: 'semana', titulo: 'Assista 15 minutos de live', metrica: 'live_min', meta: 15, moedas: 10, ini: inicioSemana(), fim: inicioSemana() + 7 * DIA_MS });
   const custom = (await q('SELECT * FROM desafios WHERE ativo=1 AND fim>$1 ORDER BY id DESC LIMIT 20', [agora()])).map((d) => ({ chave: 'c' + d.id, tipo: 'professor', titulo: d.titulo, metrica: d.metrica, meta: d.meta, moedas: d.moedas, ini: d.inicio, fim: d.fim, id: d.id }));
   return custom.concat(fixos);
 }
@@ -1050,6 +1056,160 @@ rota('POST', '/api/chamada/:id/encerrar', async (c) => {
   else if (ch.estado === 'aceita') await q("UPDATE chamadas SET estado='encerrada', fim=$1 WHERE id=$2", [agora(), ch.id]);
   return { ok: true };
 });
+
+// ---------- lives (vídeo ao vivo via LiveKit Cloud; o servidor só emite as permissões) ----------
+const LK_URL = process.env.LIVEKIT_URL || '', LK_KEY = process.env.LIVEKIT_KEY || process.env.LIVEKIT_API_KEY || '', LK_SECRET = process.env.LIVEKIT_SECRET || process.env.LIVEKIT_API_SECRET || '';
+const LIVE_ATIVA = !!(LK_URL && LK_KEY && LK_SECRET);
+const LK_LIMITE_MIN = 5000;   // minutos de participante por mês no plano gratuito do LiveKit
+function jwtLive(video, identidade, nome, ttl = 7200) {
+  const b = (o) => Buffer.from(JSON.stringify(o)).toString('base64url');
+  const t = Math.floor(agora() / 1000);
+  const corpo = b({ alg: 'HS256', typ: 'JWT' }) + '.' + b({ iss: LK_KEY, sub: identidade, name: nome, nbf: t - 10, exp: t + ttl, video });
+  return corpo + '.' + crypto.createHmac('sha256', LK_SECRET).update(corpo).digest('base64url');
+}
+async function lkAdmin(metodo, corpo, sala) {
+  if (!LIVE_ATIVA) return;
+  try {
+    const url = LK_URL.replace(/^wss:/, 'https:').replace(/^ws:/, 'http:').replace(/\/$/, '') + '/twirp/livekit.RoomService/' + metodo;
+    await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + jwtLive({ roomAdmin: true, room: sala }, 'servidor', 'servidor', 300) }, body: JSON.stringify(corpo) });
+  } catch (e) { console.error('livekit:', e.message); }
+}
+async function encerrarLive(id) {
+  const l = (await q("SELECT * FROM lives WHERE id=$1 AND estado='ao_vivo'", [id]))[0];
+  if (!l) return;
+  await q("UPDATE lives SET estado='encerrada', fim=$1 WHERE id=$2", [agora(), id]);
+  lkAdmin('DeleteRoom', { room: l.sala }, l.sala);
+}
+// encerra lives cujo anfitrião sumiu (sem sinal há 2 min)
+async function varrerLives() {
+  try { for (const l of await q("SELECT id FROM lives WHERE estado='ao_vivo' AND ultimo<$1", [agora() - 120000])) await encerrarLive(l.id); } catch (e) { console.error('varrer:', e.message); }
+}
+async function espectadores(id) { return Number((await q('SELECT COUNT(*) AS n FROM live_visto WHERE live=$1 AND ultimo>$2 AND expulso=0', [id, agora() - 40000]))[0].n); }
+async function liveView(l, u) {
+  const d = await usuarioPorId(l.dono);
+  return { id: l.id, titulo: l.titulo, dono: d ? publico(d) : null, inicio: l.inicio, espectadores: await espectadores(l.id), eu: l.dono === u.id };
+}
+async function liveVisivel(u, l) {
+  const d = await usuarioPorId(l.dono);
+  return !!d && !d.banido && await podeVer(u, d);
+}
+rota('GET', '/api/live', async (c) => {
+  const u = await exigirLogin(c.req);
+  await varrerLives();
+  const lista = [];
+  for (const l of await q("SELECT * FROM lives WHERE estado='ao_vivo' ORDER BY id DESC LIMIT 20")) if (await liveVisivel(u, l)) lista.push(await liveView(l, u));
+  return { ativo: LIVE_ATIVA, podeIniciar: LIVE_ATIVA && !u.banido && !!u.aceitou && (!!u.admin || !!u.confiavel), lives: lista };
+});
+rota('POST', '/api/live', async (c) => {
+  const u = await exigirLogin(c.req); exigirPublicar(u);
+  if (!LIVE_ATIVA) throw erro(503, 'A live ainda não foi configurada.');
+  if (!u.admin && !u.confiavel) throw erro(403, 'Só o professor e alunos de confiança podem iniciar uma live.');
+  limitar('live:' + u.id, 6, 3600000);
+  if (await usoLiveMin() >= LK_LIMITE_MIN - 200) throw erro(429, 'O limite gratuito de minutos de live deste mês está quase no fim.');
+  await varrerLives();
+  if ((await q("SELECT id FROM lives WHERE dono=$1 AND estado='ao_vivo'", [u.id])).length) throw erro(409, 'Você já tem uma live no ar.');
+  const titulo = validarTexto(c.corpo.titulo || 'Live de inglês', 60);
+  const r = await q('INSERT INTO lives (dono, titulo, sala, inicio, ultimo) VALUES ($1,$2,$3,$4,$4) RETURNING *', [u.id, titulo, 'live-' + crypto.randomBytes(6).toString('hex'), agora()]);
+  const l = r[0];
+  // aviso: seguidores (e toda a turma, se for o professor)
+  const ids = u.admin ? (await q('SELECT DISTINCT usuario FROM push_subs WHERE usuario<>$1 LIMIT 300', [u.id])).map((x) => x.usuario)
+    : (await q("SELECT seguidor FROM seguidores WHERE seguido=$1 AND estado='ativo' LIMIT 200", [u.id])).map((x) => x.seguidor);
+  notificar(ids, { titulo: '🔴 ' + u.nome + ' está ao vivo!', corpo: titulo, url: '#live-' + l.id, tag: 'live-' + l.id });
+  return { id: l.id, url: LK_URL, token: jwtLive({ room: l.sala, roomJoin: true, canPublish: true, canSubscribe: true, canPublishData: false }, 'u' + u.id, u.nome, 4 * 3600), titulo };
+});
+rota('POST', '/api/live/:id/entrar', async (c) => {
+  const u = await exigirLogin(c.req); exigirPublicar(u);
+  if (!LIVE_ATIVA) throw erro(503, 'A live ainda não foi configurada.');
+  const l = (await q("SELECT * FROM lives WHERE id=$1 AND estado='ao_vivo'", [Number(c.params.id)]))[0];
+  if (!l || !(await liveVisivel(u, l))) throw erro(404, 'Esta live acabou ou não está disponível.');
+  const v = (await q('SELECT * FROM live_visto WHERE live=$1 AND usuario=$2', [l.id, u.id]))[0];
+  if (v && v.expulso) throw erro(403, 'Você foi removido desta live.');
+  const t = agora();
+  if (!v) await q('INSERT INTO live_visto (live, usuario, entrada, ultimo) VALUES ($1,$2,$3,$3)', [l.id, u.id, t]);
+  else await q('UPDATE live_visto SET ultimo=$1 WHERE live=$2 AND usuario=$3', [t, l.id, u.id]);
+  const n = await espectadores(l.id);
+  await q('UPDATE lives SET pico=$1 WHERE id=$2 AND pico<$1', [n, l.id]);
+  return { url: LK_URL, token: jwtLive({ room: l.sala, roomJoin: true, canPublish: false, canSubscribe: true, canPublishData: false }, 'u' + u.id, u.nome, 4 * 3600), live: await liveView(l, u) };
+});
+rota('POST', '/api/live/:id/ping', async (c) => {
+  const u = await exigirLogin(c.req);
+  const l = (await q('SELECT * FROM lives WHERE id=$1', [Number(c.params.id)]))[0];
+  if (!l) throw erro(404, 'Live não encontrada');
+  const t = agora();
+  if (l.dono === u.id) { if (l.estado === 'ao_vivo') await q('UPDATE lives SET ultimo=$1 WHERE id=$2', [t, l.id]); }
+  else {
+    const v = (await q('SELECT * FROM live_visto WHERE live=$1 AND usuario=$2', [l.id, u.id]))[0];
+    if (v && !v.expulso && l.estado === 'ao_vivo') {
+      const delta = t - v.ultimo <= 45000 ? Math.floor((t - v.ultimo) / 1000) : 0;
+      await q('UPDATE live_visto SET ultimo=$1, seg=seg+$2 WHERE live=$3 AND usuario=$4', [t, delta, l.id, u.id]);
+      const minutos = Math.floor((v.seg + delta) / 60) - Math.floor(v.seg / 60);
+      if (minutos > 0) evento(u.id, 'live_min', minutos);
+    }
+    if (v && v.expulso) return { estado: 'expulso', espectadores: 0 };
+  }
+  const n = await espectadores(l.id);
+  if (n > l.pico) await q('UPDATE lives SET pico=$1 WHERE id=$2', [n, l.id]);
+  return { estado: l.estado, espectadores: n };
+});
+rota('GET', '/api/live/:id/chat', async (c) => {
+  const u = await exigirLogin(c.req);
+  const l = (await q('SELECT * FROM lives WHERE id=$1', [Number(c.params.id)]))[0];
+  if (!l) throw erro(404, 'Live não encontrada');
+  const depois = parseInt(c.url.searchParams.get('depois'), 10) || 0;
+  const v = l.dono === u.id ? null : (await q('SELECT expulso FROM live_visto WHERE live=$1 AND usuario=$2', [l.id, u.id]))[0];
+  if (l.dono !== u.id && !u.admin && (!v || v.expulso)) throw erro(403, 'Entre na live para ver o chat.');
+  const rows = await q('SELECT * FROM live_chat WHERE live=$1 AND apagada=0 AND id>$2 ORDER BY id ASC LIMIT 50', [l.id, depois]);
+  const msgs = [];
+  for (const m of rows) { const a = await usuarioPorId(m.de); msgs.push({ id: m.id, de: a ? publico(a) : { id: m.de, nome: '?', avatar: '🙂', foto: 0 }, texto: m.texto, criado: m.criado }); }
+  return { estado: l.estado, espectadores: await espectadores(l.id), msgs };
+});
+rota('POST', '/api/live/:id/chat', async (c) => {
+  const u = await exigirLogin(c.req); exigirPublicar(u);
+  limitar('lchat:' + u.id, 20, 60000);
+  const l = (await q("SELECT * FROM lives WHERE id=$1 AND estado='ao_vivo'", [Number(c.params.id)]))[0];
+  if (!l) throw erro(404, 'A live acabou');
+  if (l.dono !== u.id) { const v = (await q('SELECT expulso FROM live_visto WHERE live=$1 AND usuario=$2', [l.id, u.id]))[0]; if (!v || v.expulso) throw erro(403, 'Entre na live para comentar.'); }
+  const texto = validarTexto(c.corpo.texto, 150);
+  const r = await q('INSERT INTO live_chat (live, de, texto, criado) VALUES ($1,$2,$3,$4) RETURNING *', [l.id, u.id, texto, agora()]);
+  return { id: r[0].id, de: publico(u), texto, criado: r[0].criado };
+});
+rota('DELETE', '/api/live/chat/:id', async (c) => {
+  const u = await exigirLogin(c.req);
+  const m = (await q('SELECT * FROM live_chat WHERE id=$1', [Number(c.params.id)]))[0];
+  if (!m) throw erro(404, 'Mensagem não encontrada');
+  const l = (await q('SELECT dono FROM lives WHERE id=$1', [m.live]))[0];
+  if (!u.admin && m.de !== u.id && !(l && l.dono === u.id)) throw erro(403, 'Sem permissão');
+  await q('UPDATE live_chat SET apagada=1 WHERE id=$1', [m.id]);
+  return { ok: true };
+});
+rota('POST', '/api/live/:id/encerrar', async (c) => {
+  const u = await exigirLogin(c.req);
+  const l = (await q('SELECT * FROM lives WHERE id=$1', [Number(c.params.id)]))[0];
+  if (!l) throw erro(404, 'Live não encontrada');
+  if (l.dono !== u.id && !u.admin) throw erro(403, 'Só quem está transmitindo ou o professor encerra a live.');
+  await encerrarLive(l.id);
+  const r = (await q('SELECT * FROM lives WHERE id=$1', [l.id]))[0];
+  return { duracaoMin: Math.round((r.fim - r.inicio) / 60000), pico: r.pico };
+});
+rota('POST', '/api/live/:id/expulsar', async (c) => {
+  const u = await exigirLogin(c.req);
+  const l = (await q('SELECT * FROM lives WHERE id=$1', [Number(c.params.id)]))[0];
+  if (!l) throw erro(404, 'Live não encontrada');
+  if (l.dono !== u.id && !u.admin) throw erro(403, 'Sem permissão');
+  const alvo = Number(c.corpo.id);
+  if (alvo === l.dono) throw erro(400, 'Não é possível remover o anfitrião.');
+  await q('UPDATE live_visto SET expulso=1 WHERE live=$1 AND usuario=$2', [l.id, alvo]);
+  lkAdmin('RemoveParticipant', { room: l.sala, identity: 'u' + alvo }, l.sala);
+  return { ok: true };
+});
+// minutos de participante gastos no mês (estimativa para o limite gratuito do LiveKit)
+async function usoLiveMin() {
+  const d = new Date(agora() - 3 * 3600000), ini = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 1) + 3 * 3600000;
+  const vistos = Number((await q('SELECT COALESCE(SUM(v.seg),0) AS n FROM live_visto v JOIN lives l ON l.id=v.live WHERE l.inicio>=$1', [ini]))[0].n) / 60;
+  const anfit = Number((await q('SELECT COALESCE(SUM(CASE WHEN fim>0 THEN fim-inicio ELSE ultimo-inicio END),0) AS n FROM lives WHERE inicio>=$1', [ini]))[0].n) / 60000;
+  return Math.round(vistos + anfit);
+}
+setInterval(() => { varrerLives(); }, 60000).unref();
 
 // limpeza de áudios antigos (30 dias) para economizar espaço
 async function limparAudios() {

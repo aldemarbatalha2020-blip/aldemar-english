@@ -20,7 +20,7 @@
       return h('button', { class: aba === x[0] ? 'ativo' : '', onclick: function () { aba = x[0]; a.render(); } }, x[1]);
     }));
     main.append(h('div', { class: 'linha-t' }, h('h2', {}, '📸 Posts'), h('button', { class: 'btn mini', onclick: folhaCriar }, '+ Criar')),
-      barraStories(), seg, corpo, mais);
+      M.live ? M.live.faixa() : null, barraStories(), seg, corpo, mais);
     var primeiro = true, obs = null;
     if (aba === 'reels') obs = observarReels();
 

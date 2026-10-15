@@ -1,5 +1,5 @@
-const VERSAO = 'ae-v4';
-const ARQUIVOS = ['/', '/index.html', '/style.css', '/data.js', '/midia.js', '/posts.js', '/moderacao.js', '/notif.js', '/teoria.js', '/perfil.js', '/chamada.js', '/desafios.js', '/app.js', '/manifest.webmanifest', '/icons/icon-192.png', '/icons/icon-512.png'];
+const VERSAO = 'ae-v5';
+const ARQUIVOS = ['/', '/index.html', '/style.css', '/data.js', '/midia.js', '/posts.js', '/moderacao.js', '/notif.js', '/teoria.js', '/perfil.js', '/chamada.js', '/desafios.js', '/live.js', '/app.js', '/manifest.webmanifest', '/icons/icon-192.png', '/icons/icon-512.png'];
 self.addEventListener('install', (e) => {
   e.waitUntil(caches.open(VERSAO).then((c) => c.addAll(ARQUIVOS)).then(() => self.skipWaiting()));
 });

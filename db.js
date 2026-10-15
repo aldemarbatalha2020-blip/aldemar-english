@@ -62,6 +62,13 @@ async function iniciar() {
     id ${ID}, de BIGINT NOT NULL, para BIGINT NOT NULL, tipo TEXT NOT NULL, estado TEXT NOT NULL DEFAULT 'chamando', criado BIGINT NOT NULL, fim BIGINT NOT NULL DEFAULT 0)`);
   await q(`CREATE TABLE IF NOT EXISTS sinais (
     id ${ID}, chamada BIGINT NOT NULL, de BIGINT NOT NULL, tipo TEXT NOT NULL, dados TEXT NOT NULL, criado BIGINT NOT NULL)`);
+  await q(`CREATE TABLE IF NOT EXISTS lives (
+    id ${ID}, dono BIGINT NOT NULL, titulo TEXT NOT NULL, sala TEXT NOT NULL, estado TEXT NOT NULL DEFAULT 'ao_vivo',
+    inicio BIGINT NOT NULL, fim BIGINT NOT NULL DEFAULT 0, ultimo BIGINT NOT NULL DEFAULT 0, pico INTEGER NOT NULL DEFAULT 0)`);
+  await q(`CREATE TABLE IF NOT EXISTS live_chat (
+    id ${ID}, live BIGINT NOT NULL, de BIGINT NOT NULL, texto TEXT NOT NULL, criado BIGINT NOT NULL, apagada INTEGER NOT NULL DEFAULT 0)`);
+  await q(`CREATE TABLE IF NOT EXISTS live_visto (
+    live BIGINT NOT NULL, usuario BIGINT NOT NULL, entrada BIGINT NOT NULL, ultimo BIGINT NOT NULL, seg BIGINT NOT NULL DEFAULT 0, expulso INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (live, usuario))`);
   // Colunas novas em bancos que já existiam (erro "já existe" é ignorado)
   const novas = [
     "ALTER TABLE usuarios ADD COLUMN foto BIGINT NOT NULL DEFAULT 0",
@@ -87,6 +94,7 @@ async function iniciar() {
   await q('CREATE INDEX IF NOT EXISTS ix_ev ON eventos (usuario, tipo, criado)');
   await q('CREATE INDEX IF NOT EXISTS ix_sinais ON sinais (chamada, id)');
   await q('CREATE INDEX IF NOT EXISTS ix_posts_dono ON posts (dono, id)');
+  await q('CREATE INDEX IF NOT EXISTS ix_live_chat ON live_chat (live, id)');
   await q('CREATE INDEX IF NOT EXISTS ix_xp ON usuarios (xp_semana)');
 }
 module.exports = { q, iniciar, isPg };
