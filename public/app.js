@@ -1,6 +1,6 @@
 (function () {
   'use strict';
-  var CURSO = window.CURSO;
+  var CURSO = window.montarCurso();
   var temFala = 'speechSynthesis' in window;
   var AVATARES = ['🦊', '🐼', '🦁', '🐯', '🐸', '🐙', '🦉', '🐬', '🦄', '🐢', '🚀', '🎧'];
 
@@ -232,33 +232,60 @@
   }
 
   // ---------- jornada ----------
-  function chaveMissao(u, i) { return u.id + 'l' + i; }
+  function chaveMissao(u, i) { return u.lessons[i].k; }
+  var secaoSel = 0, capAberto = null;
   function telaJornada() {
     var wrap = h('div');
     wrap.append(h('div', { class: 'saudacao' }, h('h2', {}, 'Olá, ' + U.nome + '! ' + U.avatar), h('div', { class: 'mudo' }, 'Nível ' + (Math.floor(U.xp / 100) + 1) + ' · ' + U.xp + ' pontos · meta de hoje ' + Math.min(U.xpHoje, 50) + '/50')));
     if (M().desafios) wrap.append(M().desafios.cartao());
-    var achouAtual = false;
-    CURSO.forEach(function (u) {
-      var feitas = u.lessons.filter(function (l, i) { return U.progresso[chaveMissao(u, i)]; }).length;
-      var cap = h('section', { class: 'capitulo', style: '--cor:' + u.cor },
-        h('div', { class: 'cap-topo' },
-          h('div', { class: 'linha' }, h('div', {}, h('small', {}, 'Capítulo ' + (CURSO.indexOf(u) + 1)), h('h3', {}, u.titulo)), h('span', { class: 'em' }, u.emoji)),
-          window.TEORIA && window.TEORIA[u.id] ? h('button', { class: 'teoria-btn', onclick: function () { M().teoria.folha(u.id); } }, '📖 Teoria do capítulo') : null,
-          h('div', { class: 'fino' }, h('i', { style: 'width:' + Math.round(feitas / u.lessons.length * 100) + '%' }))));
-      var tr = h('div', { class: 'trilho' });
-      u.lessons.forEach(function (l, i) {
-        var k = chaveMissao(u, i), selos = U.progresso[k] || 0;
-        var atual = !selos && !achouAtual, bloq = !selos && !atual;
-        if (atual) achouAtual = true;
-        tr.append(h('button', { class: 'missao' + (selos ? ' feita' : ''), disabled: bloq, onclick: function () { if (i === 0 && !selos && M().teoria) M().teoria.antes(u.id, function () { comecar(l, k); }); else comecar(l, k); } },
-          h('div', { class: 'n' }, String(i + 1)),
-          h('div', { class: 'tx' }, h('b', {}, l.titulo), h('small', {}, l.words.length + ' palavras · ' + l.phrases.length + ' frases')),
-          selos ? h('span', { class: 'selos' }, '●'.repeat(selos) + '○'.repeat(3 - selos)) : (bloq ? '🔒' : h('span', { class: 'ir' }, 'Iniciar'))));
-      });
-      cap.append(tr); wrap.append(cap);
+    var SEC = window.SECOES;
+    // lição atual = primeira ainda não feita, na ordem do curso
+    var atualK = null, secAtual = 1, capAtual = null;
+    for (var ci = 0; ci < CURSO.length && !atualK; ci++) for (var li = 0; li < CURSO[ci].lessons.length; li++) { if (!U.progresso[CURSO[ci].lessons[li].k]) { atualK = CURSO[ci].lessons[li].k; secAtual = CURSO[ci].secao; capAtual = CURSO[ci].id; break; } }
+    if (!secaoSel) secaoSel = secAtual;
+    function resumoSecao(sc) {
+      var f = 0, t = 0;
+      sc.capitulos.forEach(function (c) { c.lessons.forEach(function (l) { t++; if (U.progresso[l.k]) f++; }); });
+      return { f: f, t: t };
+    }
+    var tiras = h('div', { class: 'secoes' });
+    SEC.forEach(function (sc) {
+      var r = resumoSecao(sc);
+      tiras.append(h('button', { class: 'sec-chip' + (sc.n === secaoSel ? ' sel' : ''), 'aria-label': 'Seção ' + sc.n, onclick: function () { secaoSel = sc.n; capAberto = null; render(); } },
+        h('b', {}, String(sc.n)), h('small', {}, sc.nivel), r.t && r.f === r.t ? h('i', { class: 'ok' }, '✓') : null));
+    });
+    wrap.append(tiras);
+    var sc = SEC[secaoSel - 1], rs = resumoSecao(sc), prontos = sc.capitulos.filter(function (c) { return c.lessons.length; }).length;
+    wrap.append(h('div', { class: 'secao-cab', style: '--cor:' + CORES_SEC[(secaoSel - 1) % CORES_SEC.length] },
+      h('div', {}, h('small', {}, 'Seção ' + sc.n + ' · nível ' + sc.nivel), h('h3', {}, sc.titulo)),
+      h('div', { class: 'mudo peq' }, rs.f + ' de ' + rs.t + ' lições feitas · ' + prontos + ' de 30 capítulos liberados'),
+      h('div', { class: 'fino' }, h('i', { style: 'width:' + (rs.t ? Math.round(rs.f / rs.t * 100) : 0) + '%' }))));
+    var abrir = capAberto || (sc.n === secAtual ? capAtual : null);
+    sc.capitulos.forEach(function (u) {
+      var tem = u.lessons.length > 0;
+      var feitas = u.lessons.filter(function (l) { return U.progresso[l.k]; }).length;
+      var aberto = tem && abrir === u.id;
+      var cartao = h('section', { class: 'capitulo' + (tem ? '' : ' breve') + (aberto ? ' aberto' : ''), style: '--cor:' + u.cor },
+        h('button', { class: 'cap-topo', disabled: !tem, 'aria-expanded': aberto ? 'true' : 'false', onclick: function () { capAberto = aberto ? '-' : u.id; render(); } },
+          h('div', { class: 'linha' }, h('div', {}, h('small', {}, 'Capítulo ' + u.num), h('h3', {}, u.titulo)), h('span', { class: 'em' }, u.emoji)),
+          tem ? h('div', { class: 'cap-prog' }, h('div', { class: 'fino' }, h('i', { style: 'width:' + Math.round(feitas / u.lessons.length * 100) + '%' })), h('small', { class: 'mudo' }, feitas + '/' + u.lessons.length)) : h('small', { class: 'mudo' }, 'Em breve')));
+      if (aberto) {
+        if (window.TEORIA && window.TEORIA[u.id]) cartao.append(h('button', { class: 'teoria-btn', onclick: function () { M().teoria.folha(u.id); } }, '📖 Teoria do capítulo'));
+        var tr = h('div', { class: 'trilho' });
+        u.lessons.forEach(function (l, i) {
+          var k = l.k, selos = U.progresso[k] || 0, atual = k === atualK, bloq = !selos && !atual;
+          tr.append(h('button', { class: 'missao' + (selos ? ' feita' : '') + (atual ? ' atual' : ''), disabled: bloq, onclick: function () { if (i === 0 && !selos && M().teoria) M().teoria.antes(u.id, function () { comecar(l, k); }); else comecar(l, k); } },
+            h('div', { class: 'n' }, String(i + 1)),
+            h('div', { class: 'tx' }, h('b', {}, l.titulo), h('small', {}, l.words.length + ' palavras · ' + l.phrases.length + ' frases')),
+            selos ? h('span', { class: 'selos' }, '●'.repeat(selos) + '○'.repeat(3 - selos)) : (bloq ? '🔒' : h('span', { class: 'ir' }, 'Iniciar'))));
+        });
+        cartao.append(tr);
+      }
+      wrap.append(cartao);
     });
     return wrap;
   }
+  var CORES_SEC = ['#35a7ff', '#3ee58b', '#ffd45a', '#a56bff', '#ff5575', '#38bdf8', '#f59e0b', '#ec4899', '#22c55e', '#6366f1'];
   function comecar(lic, chave) {
     if (!U.pro && U.energia <= 0) { folhaSemEnergia(); return; }
     iniciar(lic, chave);
@@ -402,12 +429,12 @@
     { ic: '🔥', t: 'Em chamas', d: '3 dias seguidos', ok: function () { return U.streak >= 3; } },
     { ic: '⭐', t: '100 pontos', d: 'Ganhe 100 pontos', ok: function () { return U.xp >= 100; } },
     { ic: '💎', t: 'Sem erros', d: 'Missão com 3 selos', ok: function () { return Object.keys(U.progresso).some(function (k) { return U.progresso[k] === 3; }); } },
-    { ic: '📚', t: 'Capítulo completo', d: 'Termine um capítulo', ok: function () { return CURSO.some(function (u) { return u.lessons.every(function (l, i) { return U.progresso[chaveMissao(u, i)]; }); }); } },
+    { ic: '📚', t: 'Capítulo completo', d: 'Termine um capítulo', ok: function () { return CURSO.some(function (u) { return u.lessons.every(function (l) { return U.progresso[l.k]; }); }); } },
     { ic: '🚀', t: '500 pontos', d: 'Ganhe 500 pontos', ok: function () { return U.xp >= 500; } },
   ];
   function telaPerfil() {
     var total = 0, feitas = 0;
-    CURSO.forEach(function (u) { u.lessons.forEach(function (l, i) { total++; if (U.progresso[chaveMissao(u, i)]) feitas++; }); });
+    CURSO.forEach(function (u) { u.lessons.forEach(function (l) { total++; if (U.progresso[l.k]) feitas++; }); });
     var topoP = h('div', { class: 'card' });
     M().perfil.montar(topoP, U.id);
     var c = h('div', {}, topoP,

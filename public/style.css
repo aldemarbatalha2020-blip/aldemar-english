@@ -427,3 +427,19 @@ input[type=search], input[type=text], input[type=number], input[type=password], 
 .av.m-fogo, .av.m-neon { animation: pulsa 2.4s ease-in-out infinite; }
 @keyframes pulsa { 50% { filter: brightness(1.18); } }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; } }
+
+/* ---- trilha: seções e capítulos ---- */
+.secoes { display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none; margin: 14px -14px 0; padding: 2px 14px 6px; }
+.sec-chip { flex: none; width: 52px; display: grid; justify-items: center; gap: 0; background: var(--painel); border: 1.5px solid var(--borda); border-radius: 14px; padding: 7px 0 6px; position: relative; }
+.sec-chip b { font-size: 18px; } .sec-chip small { color: var(--mudo); font-size: 10.5px; }
+.sec-chip.sel { border-color: var(--azul); background: #0f2a47; }
+.sec-chip .ok { position: absolute; top: -5px; right: -4px; font-style: normal; font-size: 10px; background: var(--ciano); color: #052a26; border-radius: 50%; width: 16px; height: 16px; display: grid; place-items: center; font-weight: 900; }
+.secao-cab { margin: 10px 0 4px; padding: 14px 16px; border-radius: 16px; border: 1px solid var(--borda); background: linear-gradient(135deg, color-mix(in srgb, var(--cor) 22%, var(--painel)), var(--painel)); display: grid; gap: 6px; }
+.secao-cab small { color: var(--mudo); } .secao-cab h3 { font-size: 20px; }
+.capitulo { margin-top: 10px; }
+button.cap-topo { width: 100%; text-align: left; display: grid; gap: 8px; color: inherit; }
+button.cap-topo:disabled { opacity: .6; cursor: default; }
+.cap-prog { display: flex; align-items: center; gap: 10px; } .cap-prog .fino { flex: 1; }
+.capitulo.breve .cap-topo h3 { color: var(--mudo); }
+.capitulo.aberto .cap-topo { border-color: var(--cor); }
+.missao.atual { border-color: var(--cor); box-shadow: 0 0 0 3px color-mix(in srgb, var(--cor) 25%, transparent); }

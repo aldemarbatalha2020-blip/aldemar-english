@@ -214,7 +214,7 @@ rota('POST', '/api/avatar', async (c) => {
 rota('POST', '/api/missao/concluir', async (c) => {
   const u = await exigirLogin(c.req);
   const chave = c.corpo.chave == null ? null : String(c.corpo.chave);
-  if (chave !== null && !/^u\d{1,2}l\d$/.test(chave)) throw erro(400, 'Missão inválida');
+  if (chave !== null && !/^(u\d{1,2}l\d|s\d{1,2}c\d{1,2}([lr]\d{1,2}|f))$/.test(chave)) throw erro(400, 'Missão inválida');
   const estrelas = Math.max(1, Math.min(3, parseInt(c.corpo.estrelas, 10) || 1));
   let xp = Math.max(0, Math.min(XP_MAX_LICAO, parseInt(c.corpo.xp, 10) || 0));
   const t = agora(), hoje = diaStr(t), sem = semanaId(t);
