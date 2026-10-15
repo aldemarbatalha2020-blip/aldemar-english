@@ -124,6 +124,15 @@ function validarTexto(t) {
 }
 
 // ---------- rotas ----------
+// Chave do professor enviada na tela inicial: true = válida, false = não enviada; erro 403 se errada
+function chaveProfessorOk(c) {
+  const k = String(c.corpo.chaveProfessor || '');
+  if (!k) return false;
+  limitar('adm:' + c.ip, 8, 3600000);
+  if (!ADMIN_KEY || !iguais(k, ADMIN_KEY)) throw erro(403, 'Chave do professor incorreta');
+  return true;
+}
+
 const rotas = [];
 function rota(metodo, padrao, fn) {
   const nomes = [];
@@ -133,16 +142,17 @@ function rota(metodo, padrao, fn) {
 
 rota('POST', '/api/cadastro', async (c) => {
   limitar('cad:' + c.ip, 10, 3600000);
-  if (CHAVE_ALUNO && !iguais(String(c.corpo.chaveTurma || '').trim(), CHAVE_ALUNO)) throw erro(403, 'Chave da turma incorreta. Peça ao seu professor.');
+  const virProfessor = chaveProfessorOk(c);
+  if (!virProfessor && CHAVE_ALUNO && !iguais(String(c.corpo.chaveTurma || '').trim(), CHAVE_ALUNO)) throw erro(403, 'Chave da turma incorreta. Peça ao seu professor.');
   const nome = String(c.corpo.nome || '').trim().replace(/\s+/g, ' ');
   const senha = String(c.corpo.senha || '');
   const avatar = String(c.corpo.avatar || '🙂').slice(0, 8);
   if (!/^[\p{L}\p{N}_. -]{3,20}$/u.test(nome)) throw erro(400, 'Nome de 3 a 20 letras ou números');
   if (senha.length < 6 || senha.length > 100) throw erro(400, 'A senha precisa ter pelo menos 6 caracteres');
   const chave = chaveNome(nome);
-  if (RESERVADOS.some((r) => chave === r || chave.startsWith(r + ' '))) throw erro(400, 'Esse nome é reservado');
+  if (!virProfessor && RESERVADOS.some((r) => chave === r || chave.startsWith(r + ' '))) throw erro(400, 'Esse nome é reservado');
   if ((await q('SELECT id FROM usuarios WHERE chave=$1', [chave])).length) throw erro(409, 'Esse nome já está em uso');
-  const r = await q('INSERT INTO usuarios (nome, chave, avatar, hash, criado, vidas_ts, visto) VALUES ($1,$2,$3,$4,$5,$5,$5) RETURNING *', [nome, chave, avatar, hashSenha(senha), agora()]);
+  const r = await q('INSERT INTO usuarios (nome, chave, avatar, hash, criado, vidas_ts, visto, admin) VALUES ($1,$2,$3,$4,$5,$5,$5,$6) RETURNING *', [nome, chave, avatar, hashSenha(senha), agora(), virProfessor ? 1 : 0]);
   emitirSessao(c.res, r[0].id);
   return privado(r[0]);
 });
@@ -152,8 +162,10 @@ rota('POST', '/api/entrar', async (c) => {
   const chave = chaveNome(String(c.corpo.nome || ''));
   const u = (await q('SELECT * FROM usuarios WHERE chave=$1', [chave]))[0];
   if (!u || !confereSenha(String(c.corpo.senha || ''), u.hash)) throw erro(401, 'Nome ou senha incorretos');
+  let logado = u;
+  if (chaveProfessorOk(c) && !u.admin) logado = (await q('UPDATE usuarios SET admin=1 WHERE id=$1 RETURNING *', [u.id]))[0];
   emitirSessao(c.res, u.id);
-  return privado(await recarregarEnergia(u));
+  return privado(await recarregarEnergia(logado));
 });
 
 rota('POST', '/api/sair', async (c) => {
@@ -369,19 +381,13 @@ rota('POST', '/api/pro/resgatar', async (c) => {
 });
 
 // ---------- painel do professor ----------
-rota('POST', '/api/professor/ativar', async (c) => {
-  const u = await exigirLogin(c.req);
-  limitar('adm:' + c.ip, 5, 3600000);
-  if (!ADMIN_KEY || !iguais(String(c.corpo.chave || ''), ADMIN_KEY)) throw erro(403, 'Chave incorreta');
-  return privado((await q('UPDATE usuarios SET admin=1 WHERE id=$1 RETURNING *', [u.id]))[0]);
-});
 rota('GET', '/api/professor/painel', async (c) => {
   const u = await exigirLogin(c.req); exigirProfessor(u);
   const alunos = await q('SELECT * FROM usuarios ORDER BY id DESC LIMIT 200');
   const codigos = await q('SELECT * FROM codigos ORDER BY criado DESC LIMIT 40');
   const den = await q('SELECT d.id, d.msg, m.texto, m.de, m.apagada FROM denuncias d JOIN mensagens m ON m.id=d.msg ORDER BY d.id DESC LIMIT 30');
   const denuncias = [];
-  for (const d of den) { const a = await usuarioPorId(d.de); denuncias.push({ id: d.id, msg: d.msg, texto: d.texto, autor: a ? a.nome : '?', autorId: d.de, apagada: !!d.apagada }); }
+  for (const d of den) { const a = await usuarioPorId(d.de); denuncias.push({ id: d.id, msg: d.msg, texto: d.texto, autor: a ? a.nome : '?', autorId: d.de, autorBanido: !!(a && a.banido), apagada: !!d.apagada }); }
   return {
     alunos: alunos.map((a) => ({ id: a.id, nome: a.nome, avatar: a.avatar, xp: a.xp, pro: pro(a), proAte: a.pro_ate, banido: !!a.banido, streak: sequencia(a), visto: a.visto, criado: a.criado })),
     codigos: codigos.map((k) => ({ codigo: k.codigo, dias: k.dias, usado: !!k.usado_por })),
@@ -411,8 +417,11 @@ rota('POST', '/api/professor/pro', async (c) => {
 });
 rota('POST', '/api/professor/silenciar', async (c) => {
   const u = await exigirLogin(c.req); exigirProfessor(u);
-  await q('UPDATE usuarios SET banido=$1 WHERE id=$2 AND admin=0', [c.corpo.silenciar ? 1 : 0, Number(c.corpo.id)]);
-  return { ok: true };
+  const alvo = await usuarioPorId(Number(c.corpo.id));
+  if (!alvo) throw erro(404, 'Aluno não encontrado');
+  if (alvo.admin) throw erro(400, 'Não é possível silenciar um professor');
+  const r = await q('UPDATE usuarios SET banido=$1 WHERE id=$2 RETURNING banido', [c.corpo.silenciar ? 1 : 0, alvo.id]);
+  return { ok: true, silenciado: !!r[0].banido };
 });
 
 // ---------- servidor ----------

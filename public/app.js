@@ -176,6 +176,10 @@
     var nome = h('input', { type: 'text', placeholder: 'Seu nome (3 a 20 letras)', maxlength: '20', autocomplete: 'username' });
     var senha = h('input', { type: 'password', placeholder: 'Senha (mínimo 6)', autocomplete: 'current-password' });
     var turma = h('input', { type: 'password', placeholder: 'Chave da turma (dada pelo professor)', autocomplete: 'off' });
+    var chaveProf = h('input', { type: 'password', placeholder: 'Chave do professor', autocomplete: 'off', style: 'display:none' });
+    var ehProf = false;
+    var linkProf = h('button', { type: 'button', class: 'voltar', style: 'margin-top:8px' }, 'Sou o professor');
+    linkProf.addEventListener('click', function () { ehProf = !ehProf; desenhar(); if (ehProf) chaveProf.focus(); });
     var msg = h('div', { class: 'erro' });
     var av = h('div', { class: 'avatares' });
     var btn = h('button', { class: 'btn' }, 'Entrar');
@@ -184,7 +188,9 @@
       abaE.className = modo === 'entrar' ? 'ativo' : ''; abaC.className = modo === 'criar' ? 'ativo' : '';
       btn.textContent = modo === 'entrar' ? 'Entrar' : 'Criar minha conta';
       av.style.display = modo === 'criar' ? 'grid' : 'none';
-      turma.style.display = modo === 'criar' ? 'block' : 'none';
+      turma.style.display = (modo === 'criar' && !ehProf) ? 'block' : 'none';
+      chaveProf.style.display = ehProf ? 'block' : 'none';
+      linkProf.textContent = ehProf ? 'Não sou o professor' : 'Sou o professor';
       senha.setAttribute('autocomplete', modo === 'criar' ? 'new-password' : 'current-password');
       av.replaceChildren();
       AVATARES.forEach(function (a) { av.append(h('button', { type: 'button', class: a === avatar ? 'sel' : '', onclick: function () { avatar = a; desenhar(); } }, a)); });
@@ -194,7 +200,7 @@
     abaC.addEventListener('click', function () { modo = 'criar'; desenhar(); });
     function enviar() {
       btn.disabled = true; msg.textContent = '';
-      api('POST', modo === 'entrar' ? '/api/entrar' : '/api/cadastro', { nome: nome.value, senha: senha.value, avatar: avatar, chaveTurma: turma.value })
+      api('POST', modo === 'entrar' ? '/api/entrar' : '/api/cadastro', { nome: nome.value, senha: senha.value, avatar: avatar, chaveTurma: turma.value, chaveProfessor: ehProf ? chaveProf.value : '' })
         .then(function (u) { aplicar(u); tela = 'jornada'; render(); iniciarPolling(); enviarPendentes(); })
         .catch(function (e) { msg.textContent = e.message; btn.disabled = false; });
     }
@@ -203,7 +209,7 @@
     var el = h('div', { class: 'auth' },
       h('div', { class: 'logo' }, 'AS'), h('h1', {}, 'Aldemar English'),
       h('p', { class: 'mudo' }, 'Estude inglês em missões curtas, suba no ranking da turma e converse com os colegas.'),
-      h('div', { class: 'abas' }, abaE, abaC), nome, h('div', { class: 'espaco' }), senha, h('div', { class: 'espaco' }), turma, av, msg, btn,
+      h('div', { class: 'abas' }, abaE, abaC), nome, h('div', { class: 'espaco' }), senha, h('div', { class: 'espaco' }), turma, chaveProf, av, msg, btn, linkProf,
       h('p', { class: 'dica' }, 'Dica: use o mesmo nome e senha em qualquer aparelho para continuar de onde parou.'));
     desenhar();
     return el;
@@ -377,7 +383,7 @@
       h('div', { class: 'card' }, h('h3', {}, 'Como ganhar moedas'), h('p', { class: 'mudo', style: 'margin:0' }, 'Cada missão concluída dá 5 moedas (8 com 3 selos). Use para recarregar sua energia ou presentear colegas.')),
       h('div', { class: 'card' }, h('h3', {}, 'Conquistas'),
         CONQUISTAS.map(function (q) { return h('div', { class: 'conq' + (q.ok() ? '' : ' off') }, h('div', { class: 'ic' }, q.ic), h('div', {}, h('b', {}, q.t), h('div', { class: 'mudo peq' }, q.d))); })),
-      U.professor ? h('button', { class: 'btn', onclick: function () { tela = 'painel'; render(); } }, '🎓 Painel do professor') : cartaoProfessor(),
+      U.professor ? h('button', { class: 'btn', onclick: function () { tela = 'painel'; render(); } }, '🎓 Painel do professor') : null,
       h('div', { class: 'espaco' }),
       h('button', { class: 'btn sec', onclick: function () { api('POST', '/api/sair').finally(function () { U = null; guardar(); gravar('ae_pend', []); render(); }); } }, 'Sair da conta'),
       h('p', { class: 'dica' }, 'Suas missões e pontos ficam salvos na sua conta.'));
@@ -407,15 +413,6 @@
     api('GET', '/api/pro').then(function (p) { info.textContent = p.preco + '. ' + p.instrucoes; }).catch(function () { info.textContent = 'Fale com o seu professor para assinar.'; });
     return c;
   }
-  function cartaoProfessor() {
-    var d = h('details', { class: 'card' }, h('summary', { class: 'mudo' }, 'Sou o professor'));
-    var chave = h('input', { type: 'password', placeholder: 'Chave do professor' });
-    d.append(h('div', { class: 'espaco' }), chave, h('div', { class: 'espaco' }), h('button', { class: 'btn sec', onclick: function () {
-      api('POST', '/api/professor/ativar', { chave: chave.value }).then(function (u) { aplicar(u); render(); aviso('Painel do professor liberado.'); }).catch(falha);
-    } }, 'Liberar painel'));
-    return d;
-  }
-
   // ---------- painel do professor ----------
   function telaPainel(main) {
     main.append(h('button', { class: 'voltar', onclick: function () { tela = 'perfil'; render(); } }, '← Perfil'), h('h2', {}, '🎓 Painel do professor'));
@@ -441,14 +438,16 @@
           p.denuncias.length ? p.denuncias.map(function (d) {
             return h('div', { class: 'tabela-p' }, h('div', { style: 'flex:1' }, h('b', {}, d.autor), h('div', { class: 'mudo peq' }, d.texto)),
               d.apagada ? h('span', { class: 'mudo peq' }, 'apagada') : h('button', { class: 'btn coral mini', onclick: function () { api('DELETE', '/api/mensagem/' + d.msg).then(carregar).catch(falha); } }, 'Apagar'),
-              h('button', { class: 'btn sec mini', onclick: function () { api('POST', '/api/professor/silenciar', { id: d.autorId, silenciar: true }).then(function () { aviso('Aluno silenciado.'); carregar(); }).catch(falha); } }, 'Silenciar'));
+              h('button', { class: 'btn sec mini', onclick: function () { api('POST', '/api/professor/silenciar', { id: d.autorId, silenciar: !d.autorBanido }).then(function () { aviso(d.autorBanido ? 'Aluno reativado.' : 'Aluno silenciado.'); carregar(); }).catch(falha); } }, d.autorBanido ? 'Reativar' : 'Silenciar'));
           }) : h('p', { class: 'mudo', style: 'margin:0' }, 'Nenhuma denúncia.')));
         area.append(h('div', { class: 'card' }, h('h3', {}, 'Alunos (' + p.alunos.length + ')'),
           p.alunos.map(function (a) {
-            return h('div', { class: 'tabela-p' }, h('div', { style: 'flex:1' }, a.avatar + ' ', h('b', {}, a.nome), a.pro ? h('span', { class: 'etiqueta' }, 'PRO') : null, a.banido ? h('span', { class: 'etiqueta', style: 'background:var(--coral)' }, 'SILENCIADO') : null,
-              h('div', { class: 'mudo peq' }, a.xp + ' pts · 🔥 ' + a.streak + (a.visto ? ' · visto ' + dataBr(a.visto) : ''))),
-              h('button', { class: 'btn sec mini', onclick: function () { api('POST', '/api/professor/pro', { id: a.id, dias: a.pro ? -1 : 30 }).then(carregar).catch(falha); } }, a.pro ? 'Tirar Pro' : '+30d Pro'),
-              h('button', { class: 'btn sec mini', onclick: function () { api('POST', '/api/professor/silenciar', { id: a.id, silenciar: !a.banido }).then(carregar).catch(falha); } }, a.banido ? 'Reativar' : 'Silenciar'));
+            return h('div', { class: 'tabela-p' },
+              h('div', { class: 'info' }, a.avatar + ' ', h('b', {}, a.nome), a.pro ? h('span', { class: 'etiqueta' }, 'PRO') : null, a.banido ? h('span', { class: 'etiqueta', style: 'background:var(--coral)' }, 'SILENCIADO') : null,
+                h('div', { class: 'mudo peq' }, a.xp + ' pts · 🔥 ' + a.streak + (a.visto ? ' · visto ' + dataBr(a.visto) : ''))),
+              h('div', { class: 'acoes' },
+                h('button', { class: 'btn sec mini', onclick: function () { api('POST', '/api/professor/pro', { id: a.id, dias: a.pro ? -1 : 30 }).then(function () { aviso(a.pro ? 'Pro removido.' : 'Pro ativado por 30 dias.'); carregar(); }).catch(falha); } }, a.pro ? 'Tirar Pro' : '+30d Pro'),
+                h('button', { class: 'btn mini ' + (a.banido ? 'ciano' : 'sec'), onclick: function () { api('POST', '/api/professor/silenciar', { id: a.id, silenciar: !a.banido }).then(function () { aviso(a.banido ? 'Aluno reativado.' : 'Aluno silenciado.'); carregar(); }).catch(falha); } }, a.banido ? 'Reativar' : 'Silenciar')));
           })));
       }).catch(function (e) { area.replaceChildren(h('div', { class: 'card' }, e.message)); });
     }
