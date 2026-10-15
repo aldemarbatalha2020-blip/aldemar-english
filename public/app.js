@@ -101,7 +101,8 @@
 
   // ---------- estrutura geral ----------
   var raiz = document.getElementById('app');
-  function limparTimer() { if (timerTela) { clearInterval(timerTela); timerTela = null; } }
+  var limpaChat = null;
+  function limparTimer() { if (timerTela) { clearInterval(timerTela); timerTela = null; } if (limpaChat) { limpaChat(); limpaChat = null; } }
 
   function energiaTxt() { return U.pro ? '⚡ ∞' : '⚡ ' + U.energia + '/' + U.maxEnergia; }
   function topo() {
@@ -120,13 +121,14 @@
   // abas da Turma: Ranking, Sala geral e Conversas
   function abasTurma(ativa) {
     return h('div', { class: 'seg tres' },
-      h('button', { class: ativa === 'ranking' ? 'ativo' : '', onclick: function () { tela = 'ranking'; render(); } }, '🏆 Ranking'),
+      h('button', { class: ativa === 'ranking' ? 'ativo' : '', onclick: function () { tela = 'ranking'; render(); } }, 'Ranking'),
       h('button', { class: ativa === 'geral' ? 'ativo' : '', onclick: function () { tela = 'comunidade'; subCom = 'geral'; render(); } }, 'Sala geral'),
       h('button', { class: ativa === 'conversas' ? 'ativo' : '', onclick: function () { tela = 'comunidade'; marcarDmVisto(); subCom = 'conversas'; render(); } }, 'Conversas', temDm ? h('i', { class: 'ponto' }) : null));
   }
   function render() {
     pararFala(); limparTimer();
     raiz.replaceChildren();
+    raiz.classList.toggle('tela-chat', !!U && tela === 'comunidade' && subCom === 'conversa' && !!conversaCom);
     if (!U) { raiz.append(telaAuth()); return; }
     var main = h('main');
     if (tela === 'jornada') main.append(telaJornada());
@@ -331,8 +333,7 @@
     var seg = abasTurma(subCom);
     main.append(seg);
     if (subCom === 'geral') {
-      main.append(h('p', { class: 'mudo peq', style: 'margin-top:0' }, 'Sala da turma. Escreva em inglês para praticar! Links não são permitidos e o professor modera.'));
-      montarChat(main, '/api/chat', '/api/chat');
+      limpaChat = M().chat.montar(main, { urlGet: '/api/chat', urlPost: '/api/chat', grupo: true, cab: { titulo: 'Sala da turma', sub: 'Escreva em inglês para praticar · o professor modera' } });
     } else {
       marcarDmVisto();
       var lista = h('div', {}, h('p', { class: 'mudo' }, 'Carregando…'));
@@ -360,67 +361,10 @@
     }
   }
   function telaConversa(main) {
-    main.append(h('button', { class: 'voltar', onclick: function () { subCom = 'conversas'; render(); } }, '← Conversas'),
-      h('div', { class: 'topo-f', style: 'display:flex;gap:10px;align-items:center;margin-bottom:8px' },
-        h('button', { class: 'semfundo', onclick: function () { abrirPerfil(conversaCom.id); } }, av(conversaCom)), h('h2', { style: 'flex:1;margin:0' }, conversaCom.nome),
-        h('button', { class: 'btn sec mini', 'aria-label': 'Chamada de áudio', onclick: function () { M().chamada.ligar(conversaCom, 'audio'); } }, '📞'),
-        h('button', { class: 'btn sec mini', 'aria-label': 'Chamada de vídeo', onclick: function () { M().chamada.ligar(conversaCom, 'video'); } }, '🎥')));
-    montarChat(main, '/api/conversa/' + conversaCom.id, '/api/conversa/' + conversaCom.id);
-  }
-  function montarChat(main, urlGet, urlPost) {
-    var caixa = h('div', { class: 'chat' }, h('p', { class: 'mudo' }, 'Carregando…'));
-    var inp = h('input', { type: 'text', placeholder: 'Escreva sua mensagem…', maxlength: '300', autocomplete: 'off' });
-    var ultimo = 0, vazio = true;
-    var grav = M().midia.gravador(function (id) { return api('POST', urlPost, { tipo: 'audio', midia: id }).then(function (m) { receber([m], true); }); });
-    function bolha(m) {
-      var minha = m.de.id === U.id;
-      var meta = h('div', { class: 'meta' }, h('span', {}, hora(m.criado)),
-        (minha || U.professor) ? h('button', { onclick: function () { api('DELETE', '/api/mensagem/' + m.id).then(function () { el.remove(); }).catch(falha); } }, 'apagar')
-          : h('button', { onclick: function () { M().mod.folhaDenuncia('msg', m.id, function () { el.remove(); }); } }, 'denunciar'));
-      var conteudo;
-      if (m.tipo === 'audio') {
-        var au = h('audio', { controls: 'controls', preload: 'none', src: '/api/midia/' + m.midia });
-        var nota = h('div', { class: 'mudo peq' });
-        au.addEventListener('error', function () { au.style.display = 'none'; nota.textContent = 'Áudio expirado (apagado após 30 dias).'; });
-        conteudo = h('div', { class: 'txt audio' }, au, nota);
-      } else if (m.tipo === 'foto') {
-        var im = h('img', { src: '/api/midia/' + m.midia, alt: 'foto', loading: 'lazy' });
-        var env = h('div', { class: 'foto-chat' + (minha ? '' : ' borrada'), onclick: function () { env.classList.remove('borrada'); } }, im, minha ? null : h('span', { class: 'ver' }, 'Toque para ver'));
-        im.addEventListener('error', function () { env.replaceChildren(h('div', { class: 'mudo peq' }, 'Foto removida.')); });
-        conteudo = h('div', { class: 'txt audio' }, env);
-      } else conteudo = h('div', { class: 'txt' }, m.texto);
-      var el = h('div', { class: 'bolha' + (minha ? ' minha' : '') },
-        h('button', { class: 'semfundo', onclick: function () { folhaPessoa(m.de.id); } }, av(m.de)),
-        h('div', { class: 'corpo' }, minha ? null : h('div', { class: 'quem' }, m.de.nome, m.de.pro ? h('span', { class: 'etiqueta' }, 'PRO') : null, m.de.professor ? h('span', { class: 'etiqueta prof' }, 'PROF') : null), conteudo, meta));
-      return el;
-    }
-    function receber(msgs, rolar) {
-      if (!msgs.length) { if (vazio && !caixa.querySelector('.bolha')) { caixa.replaceChildren(h('p', { class: 'mudo' }, 'Nenhuma mensagem ainda. Diga "Hello!" 👋')); } return; }
-      if (vazio) { caixa.replaceChildren(); vazio = false; }
-      msgs.forEach(function (m) { if (m.id > ultimo) ultimo = m.id; caixa.append(bolha(m)); });
-      if (rolar) window.scrollTo(0, document.body.scrollHeight);
-    }
-    function enviar() {
-      var t = inp.value.trim(); if (!t) return; inp.value = '';
-      api('POST', urlPost, { texto: t }).then(function (m) { receber([m], true); }).catch(function (e) { inp.value = t; falha(e); });
-    }
-    var arq = h('input', { type: 'file', accept: 'image/*', style: 'display:none' });
-    arq.addEventListener('change', function () {
-      var f = arq.files && arq.files[0]; arq.value = ''; if (!f) return;
-      aviso('Enviando foto…');
-      M().midia.processarImagem(f, 1024, false, 0.78).then(function (b) { return M().midia.enviar('chatfoto', b); })
-        .then(function (r) { return api('POST', urlPost, { tipo: 'foto', midia: r.id }); }).then(function (m) { receber([m], true); }).catch(falha);
-    });
-    var btnFoto = h('button', { class: 'btn sec mini mic', 'aria-label': 'Enviar foto', onclick: function () { arq.click(); } }, '📷');
-    inp.addEventListener('keydown', function (e) { if (e.key === 'Enter') enviar(); });
-    main.append(caixa, h('div', { class: 'envio' }, arq, btnFoto, grav, inp, h('button', { class: 'btn', onclick: enviar }, 'Enviar')));
-    api('GET', urlGet).then(function (ms) { receber(ms, true); }).catch(function (e) { caixa.replaceChildren(h('p', { class: 'mudo' }, e.status === 0 ? 'Conecte-se à internet para conversar.' : e.message)); });
-    timerTela = setInterval(function () {
-      api('GET', urlGet + '?depois=' + ultimo).then(function (ms) {
-        var novas = ms.filter(function (m) { return m.id > ultimo; });
-        if (novas.length) { var fundo = window.innerHeight + window.scrollY >= document.body.scrollHeight - 140; receber(novas, fundo); }
-      }).catch(function () { /* tenta de novo */ });
-    }, 4000);
+    limpaChat = M().chat.montar(main, { urlGet: '/api/conversa/' + conversaCom.id, urlPost: '/api/conversa/' + conversaCom.id, grupo: false,
+      cab: { titulo: conversaCom.nome, sub: 'Toque no nome para ver o perfil', pessoa: conversaCom, voltar: function () { subCom = 'conversas'; render(); },
+        acoes: [h('button', { class: 'cht-ib', 'aria-label': 'Chamada de vídeo', onclick: function () { M().chamada.ligar(conversaCom, 'video'); } }, M().ic('video', 24)),
+          h('button', { class: 'cht-ib', 'aria-label': 'Chamada de áudio', onclick: function () { M().chamada.ligar(conversaCom, 'audio'); } }, M().ic('phone', 22))] } });
   }
 
   // ---------- perfil ----------

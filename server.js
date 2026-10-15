@@ -1014,7 +1014,7 @@ rota('POST', '/api/loja/equipar', async (c) => {
 });
 
 // ---------- desafios e metas ----------
-const METRICAS = { historia: 'histórias lidas', estudo: 'materiais lidos', xp: 'pontos', missao: 'missões', post: 'posts publicados', comentario: 'comentários', curtida: 'curtidas dadas', seguir: 'pessoas seguidas', live_min: 'minutos assistindo lives', live_pico60: 'espectadores numa live de 1h' };
+const METRICAS = { live_chat: 'mensagens na live', live_jogo: 'jogos da live', historia: 'histórias lidas', estudo: 'materiais lidos', xp: 'pontos', missao: 'missões', post: 'posts publicados', comentario: 'comentários', curtida: 'curtidas dadas', seguir: 'pessoas seguidas', live_min: 'minutos assistindo lives', live_pico60: 'espectadores numa live de 1h' };
 function inicioSemana(t = agora()) { return semanaId(t) * 7 * DIA_MS + 4 * DIA_MS + 3 * 3600000; }
 function inicioDia(t = agora()) { return Date.parse(diaStr(t) + 'T00:00:00Z') + 3 * 3600000; }
 function desafiosFixos() {
@@ -1035,7 +1035,9 @@ async function progressoDesafio(uid, d) {
 }
 async function todosDesafios() {
   const fixos = desafiosFixos();
-  if ((await q('SELECT 1 AS x FROM lives WHERE inicio>=$1 LIMIT 1', [inicioDia()])).length) fixos.push({ chave: 'd' + diaStr() + ':livemin10', tipo: 'dia', titulo: 'Assista 10 minutos de live', metrica: 'live_min', meta: 10, moedas: 6, ini: inicioDia(), fim: inicioDia() + DIA_MS });
+  if ((await q('SELECT 1 AS x FROM lives WHERE inicio>=$1 LIMIT 1', [inicioDia()])).length) fixos.push({ chave: 'd' + diaStr() + ':livemin10', tipo: 'live', titulo: 'Assista 10 minutos de live', metrica: 'live_min', meta: 10, moedas: 6, ini: inicioDia(), fim: inicioDia() + DIA_MS },
+      { chave: 'd' + diaStr() + ':livechat3', tipo: 'live', titulo: 'Comente 3 vezes numa live', metrica: 'live_chat', meta: 3, moedas: 3, ini: inicioDia(), fim: inicioDia() + DIA_MS },
+      { chave: 'd' + diaStr() + ':livejogo3', tipo: 'live', titulo: 'Jogue 3 mini-jogos numa live', metrica: 'live_jogo', meta: 3, moedas: 5, ini: inicioDia(), fim: inicioDia() + DIA_MS });
   const custom = (await q('SELECT * FROM desafios WHERE ativo=1 AND fim>$1 ORDER BY id DESC LIMIT 20', [agora()])).map((d) => ({ chave: 'c' + d.id, tipo: 'professor', titulo: d.titulo, metrica: d.metrica, meta: d.meta, moedas: d.moedas, ini: d.inicio, fim: d.fim, id: d.id }));
   return custom.concat(fixos);
 }
@@ -1165,6 +1167,7 @@ async function encerrarLive(id) {
   const l = (await q("SELECT * FROM lives WHERE id=$1 AND estado='ao_vivo'", [id]))[0];
   if (!l) return;
   await q("UPDATE lives SET estado='encerrada', fim=$1 WHERE id=$2", [agora(), id]);
+  REACOES.delete(id);
   lkAdmin('DeleteRoom', { room: l.sala }, l.sala);
 }
 // encerra lives cujo anfitrião sumiu (sem sinal há 2 min)
@@ -1248,7 +1251,8 @@ rota('GET', '/api/live/:id/chat', async (c) => {
   const rows = await q('SELECT * FROM live_chat WHERE live=$1 AND apagada=0 AND id>$2 ORDER BY id ASC LIMIT 50', [l.id, depois]);
   const msgs = [];
   for (const m of rows) { const a = await usuarioPorId(m.de); msgs.push({ id: m.id, de: a ? publico(a) : { id: m.de, nome: '?', avatar: '🙂', foto: 0 }, texto: m.texto, criado: m.criado }); }
-  return { estado: l.estado, espectadores: await espectadores(l.id), msgs };
+  const rc = REACOES.get(l.id) || { seq: 0, itens: [] }, desdeR = parseInt(c.url.searchParams.get('reac'), 10) || 0;
+  return { estado: l.estado, espectadores: await espectadores(l.id), msgs, reac: { seq: rc.seq, itens: rc.itens.filter((x) => x.s > desdeR).slice(-20) } };
 });
 rota('POST', '/api/live/:id/chat', async (c) => {
   const u = await exigirLogin(c.req); exigirPublicar(u);
@@ -1258,7 +1262,102 @@ rota('POST', '/api/live/:id/chat', async (c) => {
   if (l.dono !== u.id) { const v = (await q('SELECT expulso FROM live_visto WHERE live=$1 AND usuario=$2', [l.id, u.id]))[0]; if (!v || v.expulso) throw erro(403, 'Entre na live para comentar.'); }
   const texto = validarTexto(c.corpo.texto, 150);
   const r = await q('INSERT INTO live_chat (live, de, texto, criado) VALUES ($1,$2,$3,$4) RETURNING *', [l.id, u.id, texto, agora()]);
+  if (l.dono !== u.id) evento(u.id, 'live_chat');
   return { id: r[0].id, de: publico(u), texto, criado: r[0].criado };
+});
+
+// ---------- mini-jogos e reações da live ----------
+const REACOES = new Map(); // live -> { seq, itens: [{ s, tipo }] }  (só em memória: são efeitos passageiros)
+const TIPOS_REACAO = ['coracao', 'palmas', 'fogo', 'riso', 'uau'];
+const PREMIO_ACERTO = 2, PREMIO_MAX_LIVE = 10;
+async function acessoLive(u, id, exigirNoAr) {
+  const l = (await q('SELECT * FROM lives WHERE id=$1', [id]))[0];
+  if (!l || (exigirNoAr && l.estado !== 'ao_vivo')) throw erro(404, 'A live acabou');
+  const anfitriao = l.dono === u.id || !!u.admin;
+  if (!anfitriao) { const v = (await q('SELECT expulso FROM live_visto WHERE live=$1 AND usuario=$2', [l.id, u.id]))[0]; if (!v || v.expulso) throw erro(403, 'Entre na live para participar.'); }
+  return { l, anfitriao };
+}
+async function fecharJogo(j) {
+  if (j.estado !== 'aberto') return j;
+  const r = await q("UPDATE live_jogos SET estado='fechado' WHERE id=$1 AND estado='aberto' RETURNING id", [j.id]);
+  j.estado = 'fechado';
+  if (r.length && j.tipo === 'quiz' && j.correta >= 0) {
+    for (const x of await q('SELECT usuario FROM live_resp WHERE jogo=$1 AND resposta=$2', [j.id, j.correta])) {
+      const ja = Number((await q('SELECT COALESCE(SUM(r.premio),0) AS n FROM live_resp r JOIN live_jogos g ON g.id=r.jogo WHERE g.live=$1 AND r.usuario=$2', [j.live, x.usuario]))[0].n);
+      const p = Math.max(0, Math.min(PREMIO_ACERTO, PREMIO_MAX_LIVE - ja));
+      if (p > 0) { await q('UPDATE live_resp SET premio=$1 WHERE jogo=$2 AND usuario=$3', [p, j.id, x.usuario]); await q('UPDATE usuarios SET gemas=gemas+$1 WHERE id=$2', [p, x.usuario]); }
+    }
+  }
+  return j;
+}
+async function jogoView(j, u) {
+  if (j.estado === 'aberto' && j.fim <= agora()) await fecharJogo(j);
+  const opcoes = JSON.parse(j.opcoes);
+  const cont = opcoes.map(() => 0);
+  for (const x of await q('SELECT resposta, COUNT(*) AS n FROM live_resp WHERE jogo=$1 GROUP BY resposta', [j.id])) if (cont[x.resposta] !== undefined) cont[x.resposta] = Number(x.n);
+  const minha = (await q('SELECT resposta, premio FROM live_resp WHERE jogo=$1 AND usuario=$2', [j.id, u.id]))[0];
+  const fechado = j.estado !== 'aberto';
+  return { id: j.id, tipo: j.tipo, pergunta: j.pergunta, opcoes, fim: j.fim, dur: Math.round((j.fim - j.criado) / 1000), estado: j.estado, contagem: cont, total: cont.reduce((a, b) => a + b, 0),
+    correta: fechado && j.tipo === 'quiz' ? j.correta : -1, minha: minha ? minha.resposta : -1, premio: minha ? minha.premio : 0, agora: agora() };
+}
+rota('POST', '/api/live/:id/jogo', async (c) => {
+  const u = await exigirLogin(c.req); exigirPublicar(u);
+  limitar('ljogo:' + u.id, 40, 3600000);
+  const { l, anfitriao } = await acessoLive(u, Number(c.params.id), true);
+  if (!anfitriao) throw erro(403, 'Só quem está transmitindo cria jogos.');
+  const tipo = c.corpo.tipo === 'enquete' ? 'enquete' : 'quiz';
+  const pergunta = validarTexto(c.corpo.pergunta, 120);
+  const opcoes = (Array.isArray(c.corpo.opcoes) ? c.corpo.opcoes : []).slice(0, 4).map((o) => validarTexto(o, 40));
+  if (opcoes.length < 2) throw erro(400, 'Coloque pelo menos 2 opções.');
+  const correta = tipo === 'quiz' ? parseInt(c.corpo.correta, 10) : -1;
+  if (tipo === 'quiz' && !(correta >= 0 && correta < opcoes.length)) throw erro(400, 'Marque a resposta certa.');
+  const seg = Math.max(8, Math.min(90, parseInt(c.corpo.seg, 10) || 20));
+  for (const g of await q("SELECT * FROM live_jogos WHERE live=$1 AND estado='aberto'", [l.id])) await fecharJogo(g);
+  const t = agora();
+  const r = await q('INSERT INTO live_jogos (live, tipo, pergunta, opcoes, correta, criado, fim) VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *', [l.id, tipo, pergunta, JSON.stringify(opcoes), correta, t, t + seg * 1000]);
+  return jogoView(r[0], u);
+});
+rota('GET', '/api/live/:id/jogo', async (c) => {
+  const u = await exigirLogin(c.req);
+  const { l } = await acessoLive(u, Number(c.params.id), false);
+  const j = (await q('SELECT * FROM live_jogos WHERE live=$1 ORDER BY id DESC LIMIT 1', [l.id]))[0];
+  if (!j) return { jogo: null };
+  const v = await jogoView(j, u);
+  if (v.estado !== 'aberto' && agora() - v.fim > 25000) return { jogo: null };
+  return { jogo: v };
+});
+rota('POST', '/api/live/:id/jogo/responder', async (c) => {
+  const u = await exigirLogin(c.req); exigirPublicar(u);
+  limitar('lresp:' + u.id, 60, 3600000);
+  const { l, anfitriao } = await acessoLive(u, Number(c.params.id), true);
+  if (anfitriao && l.dono === u.id) throw erro(400, 'Quem transmite não responde ao próprio jogo.');
+  const j = (await q('SELECT * FROM live_jogos WHERE id=$1 AND live=$2', [Number(c.corpo.jogo), l.id]))[0];
+  if (!j) throw erro(404, 'Jogo não encontrado');
+  if (j.estado !== 'aberto' || j.fim <= agora()) throw erro(400, 'O tempo deste jogo acabou.');
+  const resp = parseInt(c.corpo.resposta, 10);
+  if (!(resp >= 0 && resp < JSON.parse(j.opcoes).length)) throw erro(400, 'Opção inválida');
+  try { await q('INSERT INTO live_resp (jogo, usuario, resposta, criado) VALUES ($1,$2,$3,$4)', [j.id, u.id, resp, agora()]); } catch (e) { throw erro(409, 'Você já respondeu.'); }
+  evento(u.id, 'live_jogo');
+  return jogoView(j, u);
+});
+rota('POST', '/api/live/:id/jogo/encerrar', async (c) => {
+  const u = await exigirLogin(c.req);
+  const { l, anfitriao } = await acessoLive(u, Number(c.params.id), false);
+  if (!anfitriao) throw erro(403, 'Só quem transmite encerra o jogo.');
+  const j = (await q('SELECT * FROM live_jogos WHERE live=$1 ORDER BY id DESC LIMIT 1', [l.id]))[0];
+  if (j) { await q('UPDATE live_jogos SET fim=$1 WHERE id=$2 AND estado=$3', [agora(), j.id, 'aberto']); j.fim = agora(); await fecharJogo(j); return { jogo: await jogoView(j, u) }; }
+  return { jogo: null };
+});
+rota('POST', '/api/live/:id/reacao', async (c) => {
+  const u = await exigirLogin(c.req); exigirPublicar(u);
+  limitar('lreac:' + u.id, 40, 10000);
+  const { l } = await acessoLive(u, Number(c.params.id), true);
+  const tipo = String(c.corpo.tipo || '');
+  if (!TIPOS_REACAO.includes(tipo)) throw erro(400, 'Reação inválida');
+  const r = REACOES.get(l.id) || { seq: 0, itens: [] };
+  r.seq++; r.itens.push({ s: r.seq, tipo, u: u.id }); if (r.itens.length > 60) r.itens.splice(0, r.itens.length - 60);
+  REACOES.set(l.id, r);
+  return { ok: true };
 });
 rota('DELETE', '/api/live/chat/:id', async (c) => {
   const u = await exigirLogin(c.req);

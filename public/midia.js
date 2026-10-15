@@ -95,7 +95,14 @@
       h('div', { style: 'display:flex;justify-content:center;margin:10px 0' }, a.av(U, 'grande')), estado,
       arquivo,
       h('div', { class: 'opcoes-f' },
-        h('button', { class: 'btn', onclick: function () { arquivo.click(); } }, '📷 Escolher uma foto'),
+        h('button', { class: 'btn', onclick: function () {
+          M.camera.abrir({ foto: true, video: false, selfie: true, quadrado: true, maxLado: 512, titulo: 'Foto de perfil' }).then(function (r) {
+            if (!r) return; estado.textContent = 'Enviando a foto…';
+            return enviar('perfil', r.blob).then(function (x) { return a.api('POST', '/api/perfil/foto', { midia: x.id }); })
+              .then(function (u) { a.aplicar(u); msgEstado(); a.render(); a.aviso(u.foto ? 'Foto atualizada!' : 'Foto enviada! O professor precisa aprovar antes de aparecer para a turma.'); });
+          }).catch(function (e) { msgEstado(); a.falha(e); });
+        } }, M.ic('camera', 18), 'Tirar uma foto'),
+        h('button', { class: 'btn sec', onclick: function () { arquivo.click(); } }, M.ic('image', 18), 'Escolher da galeria'),
         U.foto || U.fotoPend ? h('button', { class: 'btn sec', onclick: function () { a.api('DELETE', '/api/perfil/foto').then(function (u) { a.aplicar(u); fechar(); a.render(); }).catch(a.falha); } }, 'Remover foto') : null),
       h('p', { class: 'mudo peq' }, 'A foto passa pela aprovação do professor. Use uma foto sua, com roupa adequada. Fotos de outras pessoas, de celebridades ou impróprias são recusadas.'),
       h('h3', { style: 'margin-top:12px' }, 'Ou escolha um avatar'), grade);

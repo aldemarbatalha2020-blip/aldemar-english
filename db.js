@@ -69,6 +69,10 @@ async function iniciar() {
     id ${ID}, live BIGINT NOT NULL, de BIGINT NOT NULL, texto TEXT NOT NULL, criado BIGINT NOT NULL, apagada INTEGER NOT NULL DEFAULT 0)`);
   await q(`CREATE TABLE IF NOT EXISTS live_visto (
     live BIGINT NOT NULL, usuario BIGINT NOT NULL, entrada BIGINT NOT NULL, ultimo BIGINT NOT NULL, seg BIGINT NOT NULL DEFAULT 0, expulso INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (live, usuario))`);
+  await q(`CREATE TABLE IF NOT EXISTS live_jogos (
+    id ${ID}, live BIGINT NOT NULL, tipo TEXT NOT NULL, pergunta TEXT NOT NULL, opcoes TEXT NOT NULL, correta INTEGER NOT NULL DEFAULT -1, criado BIGINT NOT NULL, fim BIGINT NOT NULL, estado TEXT NOT NULL DEFAULT 'aberto')`);
+  await q(`CREATE TABLE IF NOT EXISTS live_resp (
+    jogo BIGINT NOT NULL, usuario BIGINT NOT NULL, resposta INTEGER NOT NULL, premio INTEGER NOT NULL DEFAULT 0, criado BIGINT NOT NULL, PRIMARY KEY (jogo, usuario))`);
   await q(`CREATE TABLE IF NOT EXISTS leituras (
     usuario BIGINT NOT NULL, tipo TEXT NOT NULL, item TEXT NOT NULL, valor INTEGER NOT NULL DEFAULT 0, criado BIGINT NOT NULL, PRIMARY KEY (usuario, tipo, item))`);
   // Colunas novas em bancos que já existiam (erro "já existe" é ignorado)

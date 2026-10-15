@@ -16,10 +16,10 @@
   function tela(main) {
     var a = AE(), h = a.h;
     var corpo = h('div'), mais = h('div');
-    var seg = h('div', { class: 'seg tres' }, [['feed', 'Feed'], ['seguindo', 'Seguindo'], ['reels', '🎬 Reels']].map(function (x) {
+    var seg = h('div', { class: 'abas-l' }, [['feed', 'Feed'], ['seguindo', 'Seguindo'], ['reels', 'Reels']].map(function (x) {
       return h('button', { class: aba === x[0] ? 'ativo' : '', onclick: function () { aba = x[0]; a.render(); } }, x[1]);
     }));
-    main.append(h('div', { class: 'linha-t' }, h('h2', {}, '📸 Posts'), h('button', { class: 'btn mini', onclick: folhaCriar }, '+ Criar')),
+    main.append(h('div', { class: 'linha-t' }, h('h2', {}, 'Posts'), h('button', { class: 'btn mini criar-b', onclick: function () { folhaCriar(); } }, M.ic('plus', 18), 'Criar')),
       M.live ? M.live.faixa() : null, barraStories(), seg, corpo, mais);
     var primeiro = true, obs = null;
     if (aba === 'reels') obs = observarReels();
@@ -64,24 +64,27 @@
       }
     } else midia = h('img', { src: '/api/midia/' + p.midia, alt: 'Foto de ' + p.dono.nome, loading: 'lazy' });
     var som = h('span', { class: 'som' }, '🔇');
+    var coracao = h('span', { class: 'coracao-anim', hidden: 'hidden' }, M.ic('heart', 84, true)), ultToque = 0;
+    function toqueDuplo() { if (!eu) btnC.click(); coracao.hidden = false; coracao.classList.remove('vai'); void coracao.offsetWidth; coracao.classList.add('vai'); setTimeout(function () { coracao.hidden = true; }, 800); }
+    midia.addEventListener('click', function () { var t = Date.now(); if (t - ultToque < 320) toqueDuplo(); ultToque = t; });
     var btnC = h('button', { class: 'acao', onclick: function () {
       a.api('POST', '/api/posts/' + p.id + '/curtir').then(function (r) { curtidas = r.curtidas; eu = r.euCurti; pintar(); }).catch(a.falha);
     } });
     var btnM = h('button', { class: 'acao', onclick: function () { folhaComentarios(p, function (n) { ncom = n; pintar(); }); } });
-    function pintar() { btnC.textContent = (eu ? '❤️ ' : '🤍 ') + curtidas; btnC.classList.toggle('on', eu); btnM.textContent = '💬 ' + ncom; }
+    function pintar() { btnC.replaceChildren(M.ic('heart', 24, eu), h('span', {}, String(curtidas))); btnC.classList.toggle('on', eu); btnM.replaceChildren(M.ic('comment', 23), h('span', {}, String(ncom))); }
     pintar();
     var meu = p.dono.id === U.id;
     var rodape = [];
-    if (p.estado === 'pendente') rodape.push(h('div', { class: 'pendente' }, '⏳ Aguardando aprovação do professor. Só você vê este post por enquanto.'));
-    else rodape.push(h('div', { class: 'acoes-p' }, btnC, btnM, h('button', { class: 'acao', onclick: function () { compartilhar(p); } }, '↗️ Enviar'), h('span', { style: 'flex:1' }),
-      !meu && !U.professor ? h('button', { class: 'acao mudo', onclick: function () { window.Mods.mod.folhaDenuncia('post', p.id, function () { el.remove(); }); } }, '🚩') : null));
+    if (p.estado === 'pendente') rodape.push(h('div', { class: 'pendente' }, 'Aguardando aprovação do professor. Só você vê este post por enquanto.'));
+    else rodape.push(h('div', { class: 'acoes-p' }, btnC, btnM, h('button', { class: 'acao', 'aria-label': 'Compartilhar', onclick: function () { compartilhar(p); } }, M.ic('share', 23), h('span', {}, 'Enviar')), h('span', { style: 'flex:1' }),
+      !meu && !U.professor ? h('button', { class: 'acao mudo', 'aria-label': 'Denunciar', onclick: function () { window.Mods.mod.folhaDenuncia('post', p.id, function () { el.remove(); }); } }, M.ic('flag', 21)) : null));
     if (meu || U.professor) rodape.push(h('button', { class: 'link', onclick: function () {
       if (confirm('Apagar este post?')) a.api('DELETE', '/api/posts/' + p.id).then(function () { el.remove(); }).catch(a.falha);
     } }, 'Apagar post'));
     a.add(el, [h('div', { class: 'post-topo' }, h('button', { class: 'semfundo', onclick: function () { a.perfil(p.dono.id); } }, a.av(p.dono)),
       h('div', {}, h('b', {}, p.dono.nome, p.dono.professor ? h('span', { class: 'etiqueta prof' }, 'PROF') : null, p.formato === 'reel' ? h('span', { class: 'etiqueta', style: 'background:var(--roxo)' }, 'REEL') : null),
         h('div', { class: 'mudo peq' }, a.dataBr(p.criado) + ' ' + a.hora(p.criado)))),
-      h('div', { class: 'midia-w' }, midia, opc.reel && p.tipo === 'video' ? som : null), p.legenda ? h('p', { class: 'legenda' }, p.legenda) : null, rodape]);
+      h('div', { class: 'midia-w' }, midia, coracao, opc.reel && p.tipo === 'video' ? som : null), p.legenda ? h('p', { class: 'legenda' }, p.legenda) : null, rodape]);
     return el;
   }
 
@@ -122,50 +125,39 @@
   }
 
   // ---------- criar ----------
+  // 1) escolhe o tipo  2) a câmera abre na hora  3) legenda e compartilhar
   var FORMATOS = [
-    { id: 'foto', t: '🖼️ Foto', accept: 'image/*', formato: 'post', info: 'Foto normal no seu perfil e no feed.' },
-    { id: 'video', t: '🎞️ Vídeo', accept: 'video/*', formato: 'post', max: 90, info: 'Vídeo de até 1 min 30 s.' },
-    { id: 'reel', t: '🎬 Reel', accept: 'video/*', formato: 'reel', max: 60, info: 'Vídeo curto (até 1 min), de preferência em pé.' },
-    { id: 'story', t: '⭕ Story', accept: 'image/*,video/*', formato: 'story', max: 30, info: 'Some depois de 24 horas. Vídeo de até 30 s.' }];
+    { id: 'foto', t: 'Publicação', ic: 'image', formato: 'post', desc: 'Foto no feed e no seu perfil', cam: { foto: true, video: false, maxLado: 1280, modo: 'foto' } },
+    { id: 'reel', t: 'Reel', ic: 'film', formato: 'reel', desc: 'Vídeo curto em pé, até 1 min', cam: { foto: false, video: true, maxS: 60, modo: 'video' } },
+    { id: 'story', t: 'Story', ic: 'circle', formato: 'story', desc: 'Some em 24 horas', cam: { foto: true, video: true, maxS: 30, maxLado: 1280, modo: 'foto' } },
+    { id: 'video', t: 'Vídeo', ic: 'video', formato: 'post', desc: 'Vídeo no feed, até 1 min 30 s', cam: { foto: false, video: true, maxS: 90, modo: 'video' } }];
   function folhaCriar(inicial) {
-    var a = AE(), h = a.h, mid = window.Mods.midia, fechar, blob = null, tipo = '', fmt = FORMATOS[0];
-    if (typeof inicial === 'string') fmt = FORMATOS.filter(function (f) { return f.id === inicial; })[0] || fmt;
-    var arq = h('input', { type: 'file', style: 'display:none' });
-    var previa = h('div', { class: 'previa-np' });
-    var legenda = h('textarea', { rows: '2', maxlength: '200', placeholder: 'Legenda (opcional) — escreva em inglês para praticar!' });
-    var estado = h('p', { class: 'mudo peq' });
-    var info = h('p', { class: 'mudo peq', style: 'margin:4px 0' });
-    var chips = h('div', { class: 'chips-f' });
-    var publicar = h('button', { class: 'btn', disabled: true }, 'Enviar');
-    function pintar() {
-      chips.replaceChildren(); FORMATOS.forEach(function (f) { chips.append(h('button', { type: 'button', class: 'chip-f' + (f === fmt ? ' sel' : ''), onclick: function () { fmt = f; blob = null; previa.replaceChildren(); publicar.disabled = true; estado.textContent = ''; pintar(); } }, f.t)); });
-      arq.setAttribute('accept', fmt.accept); info.textContent = fmt.info + ' O professor aprova antes de aparecer (alunos de confiança publicam direto).';
-    }
-    pintar();
-    arq.addEventListener('change', function () {
-      var f = arq.files && arq.files[0]; arq.value = ''; if (!f) return;
-      blob = null; publicar.disabled = true; previa.replaceChildren(); estado.textContent = 'Preparando…';
-      var video = /^video\//.test(f.type);
-      if (!video && !/^image\//.test(f.type)) { estado.textContent = 'Escolha uma foto ou um vídeo.'; return; }
-      if (video && !fmt.max) { estado.textContent = 'Neste formato escolha uma foto. Para vídeo, use Vídeo, Reel ou Story.'; return; }
-      if (!video && (fmt.id === 'video' || fmt.id === 'reel')) { estado.textContent = 'Neste formato escolha um vídeo.'; return; }
-      (video ? mid.processarVideo(f, function (x) { estado.textContent = 'Reduzindo o vídeo… ' + Math.round(x * 100) + '%'; }, fmt.max) : mid.processarImagem(f, 1280, false, 0.8))
-        .then(function (b) {
-          blob = b; tipo = video ? 'video' : 'foto'; estado.textContent = '';
-          var url = URL.createObjectURL(b);
-          previa.append(video ? h('video', { src: url, controls: 'controls', playsinline: 'playsinline' }) : h('img', { src: url, alt: 'prévia' }));
-          publicar.disabled = false;
-        }).catch(function (e) { estado.textContent = e.message; });
-    });
+    var a = AE(), h = a.h, fechar;
+    if (typeof inicial === 'string') { var f0 = FORMATOS.filter(function (f) { return f.id === inicial; })[0]; if (f0) { capturar(f0); return; } }
+    fechar = a.folha(h('div', { class: 'criar' }, h('h3', {}, 'Criar'), h('p', { class: 'mudo peq', style: 'margin:0 0 12px' }, 'Escolha o que você quer compartilhar. A câmera abre em seguida.'),
+      h('div', { class: 'criar-grade' }, FORMATOS.map(function (f) {
+        return h('button', { class: 'criar-op', onclick: function () { fechar(); capturar(f); } }, h('span', { class: 'criar-ic' }, M.ic(f.ic, 26)), h('b', {}, f.t), h('small', { class: 'mudo' }, f.desc));
+      }))));
+  }
+  function capturar(fmt) {
+    var a = AE();
+    M.camera.abrir(Object.assign({ titulo: fmt.t }, fmt.cam)).then(function (r) { if (r) compor(fmt, r); }).catch(a.falha);
+  }
+  function compor(fmt, r) {
+    var a = AE(), h = a.h, mid = M.midia, fechar, url = URL.createObjectURL(r.blob);
+    var previa = h('div', { class: 'previa-np' }, r.tipo === 'video' ? h('video', { src: url, controls: 'controls', playsinline: 'playsinline' }) : h('img', { src: url, alt: 'Prévia' }));
+    var legenda = h('textarea', { rows: '2', maxlength: '200', placeholder: 'Escreva uma legenda… (em inglês, para praticar)' });
+    var estado = h('p', { class: 'mudo peq', style: 'min-height:18px;margin:6px 0' });
+    var publicar = h('button', { class: 'btn' }, 'Compartilhar');
     publicar.addEventListener('click', function () {
-      if (!blob) return; publicar.disabled = true; estado.textContent = 'Enviando…';
-      mid.enviar(tipo, blob).then(function (r) { return a.api('POST', '/api/posts', { midia: r.id, legenda: legenda.value, formato: fmt.formato }); })
-        .then(function (p) { fechar(); a.aviso(p.estado === 'publicado' ? 'Publicado!' : 'Enviado! O professor vai aprovar antes de aparecer para a turma.'); a.render(); })
+      publicar.disabled = true; estado.textContent = 'Enviando…';
+      mid.enviar(r.tipo, r.blob).then(function (m) { return a.api('POST', '/api/posts', { midia: m.id, legenda: legenda.value, formato: fmt.formato }); })
+        .then(function (p) { URL.revokeObjectURL(url); fechar(); a.aviso(p.estado === 'publicado' ? 'Publicado!' : 'Enviado! O professor aprova antes de aparecer para a turma.'); a.render(); })
         .catch(function (e) { publicar.disabled = false; estado.textContent = e.message; });
     });
-    fechar = a.folha(h('div', {}, h('h3', {}, '✨ Criar'), chips, info, arq, previa,
-      h('button', { class: 'btn sec', onclick: function () { arq.click(); } }, '📂 Escolher ou gravar'), h('div', { class: 'espaco' }), legenda, estado,
-      h('p', { class: 'mudo peq' }, 'Sem nudez, violência, ofensas ou dados pessoais. Conteúdo fora das regras é removido e pode levar a silenciamento.'), publicar));
+    fechar = a.folha(h('div', { class: 'criar' }, h('h3', {}, fmt.t), previa, legenda, estado,
+      h('div', { class: 'opcoes-f', style: 'grid-template-columns:1fr 1fr' }, h('button', { class: 'btn sec', onclick: function () { URL.revokeObjectURL(url); fechar(); capturar(fmt); } }, 'Refazer'), publicar),
+      h('p', { class: 'mudo peq', style: 'margin:10px 0 0' }, 'O professor aprova antes de aparecer (alunos de confiança publicam direto). Sem nudez, violência, ofensas ou dados pessoais.')));
   }
 
   // ---------- stories ----------
@@ -174,7 +166,7 @@
   function barraStories() {
     var a = AE(), h = a.h, U = a.U;
     var barra = h('div', { class: 'stories' });
-    var meu = h('button', { class: 'story-b', onclick: function () { folhaCriar('story'); } }, h('div', { class: 'anel novo' }, a.av(U), h('span', { class: 'mais' }, '+')), h('small', {}, 'Seu story'));
+    var meu = h('button', { class: 'story-b', onclick: function () { folhaCriar('story'); } }, h('div', { class: 'anel novo' }, a.av(U), h('span', { class: 'mais' }, M.ic('plus', 12))), h('small', {}, 'Seu story'));
     barra.append(meu);
     a.api('GET', '/api/stories').then(function (gs) {
       var v = vistos();

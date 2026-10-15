@@ -42,3 +42,9 @@ Não há cobrança automática: o pagamento (ex.: Pix) é combinado fora do app.
 
 ## Trilha do ano letivo 2027
 10 seções × 30 capítulos (≈1 seção por mês). O mapa completo está em `public/trilha.js`; o conteúdo entra aos poucos em `public/conteudo-*.js` com `Cap(secao, capitulo, 'en=pt;…', 'frase=tradução;…')`. Cada 6 palavras + 3 frases geram uma lição "Parte"; revisões e o "Desafio do capítulo" são montados sozinhos. Capítulos sem conteúdo aparecem como "Em breve". As chaves de progresso (`uNlN` legado, `sScCl/r/f`) não mudam quando se acrescenta conteúdo no fim.
+
+## Chat, câmera e live (v8)
+- **Chat**: bolhas agrupadas por pessoa e dia, player de áudio com onda e velocidade, gravação segurando o botão (deslizar para a esquerda cancela, para cima trava), foto pela câmera ou galeria, menu de ações. Ícones em SVG (`public/icons.js`).
+- **Câmera** (`public/camera.js`): foto/vídeo dentro do app, virar câmera, galeria, revisão antes de usar; se o navegador não abrir a câmera, oferece a câmera nativa do celular.
+- **Posts**: "Criar" escolhe o tipo (Publicação, Reel, Story, Vídeo) e abre a câmera; depois legenda e compartilhar. Toque duplo curte.
+- **Live**: reações flutuantes, mini-jogos (quiz de vocabulário automático, quiz próprio, enquete; acerto = 2 moedas, até 10 por live) e desafios que só aparecem quando há live no dia (comentar 3x, jogar 3 jogos, assistir 10 min).

@@ -3,7 +3,7 @@
   'use strict';
   var M = window.Mods = window.Mods || {};
   function AE() { return window.AE; }
-  var ICONE = { dia: '☀️', semana: '📅', professor: '🎓' };
+  var ICONE = { dia: '☀️', semana: '📅', professor: '🎓', live: '🔴' };
 
   function cartao() {
     var a = AE(), h = a.h;

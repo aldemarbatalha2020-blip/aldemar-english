@@ -1,5 +1,5 @@
-const VERSAO = 'ae-v7';
-const ARQUIVOS = ['/', '/index.html', '/style.css', '/data.js', '/trilha.js', '/conteudo-s1.js', '/midia.js', '/posts.js', '/moderacao.js', '/notif.js', '/teoria.js', '/perfil.js', '/chamada.js', '/desafios.js', '/live.js', '/estudos1.js', '/estudos2.js', '/estudos3.js', '/historias.js', '/estudos.js', '/historias-ui.js', '/loja.js', '/app.js', '/manifest.webmanifest', '/icons/icon-192.png', '/icons/icon-512.png'];
+const VERSAO = 'ae-v8';
+const ARQUIVOS = ['/', '/index.html', '/style.css', '/data.js', '/icons.js', '/camera.js', '/chat.js', '/trilha.js', '/conteudo-s1.js', '/midia.js', '/posts.js', '/moderacao.js', '/notif.js', '/teoria.js', '/perfil.js', '/chamada.js', '/desafios.js', '/live.js', '/estudos1.js', '/estudos2.js', '/estudos3.js', '/historias.js', '/estudos.js', '/historias-ui.js', '/loja.js', '/app.js', '/manifest.webmanifest', '/icons/icon-192.png', '/icons/icon-512.png'];
 self.addEventListener('install', (e) => {
   e.waitUntil(caches.open(VERSAO).then((c) => c.addAll(ARQUIVOS)).then(() => self.skipWaiting()));
 });
