@@ -69,6 +69,8 @@ async function iniciar() {
     id ${ID}, live BIGINT NOT NULL, de BIGINT NOT NULL, texto TEXT NOT NULL, criado BIGINT NOT NULL, apagada INTEGER NOT NULL DEFAULT 0)`);
   await q(`CREATE TABLE IF NOT EXISTS live_visto (
     live BIGINT NOT NULL, usuario BIGINT NOT NULL, entrada BIGINT NOT NULL, ultimo BIGINT NOT NULL, seg BIGINT NOT NULL DEFAULT 0, expulso INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (live, usuario))`);
+  await q(`CREATE TABLE IF NOT EXISTS leituras (
+    usuario BIGINT NOT NULL, tipo TEXT NOT NULL, item TEXT NOT NULL, valor INTEGER NOT NULL DEFAULT 0, criado BIGINT NOT NULL, PRIMARY KEY (usuario, tipo, item))`);
   // Colunas novas em bancos que já existiam (erro "já existe" é ignorado)
   const novas = [
     "ALTER TABLE usuarios ADD COLUMN foto BIGINT NOT NULL DEFAULT 0",
@@ -82,6 +84,10 @@ async function iniciar() {
     "ALTER TABLE usuarios ADD COLUMN bio TEXT NOT NULL DEFAULT ''",
     "ALTER TABLE usuarios ADD COLUMN privado INTEGER NOT NULL DEFAULT 0",
     "ALTER TABLE usuarios ADD COLUMN confiavel INTEGER NOT NULL DEFAULT 0",
+    "ALTER TABLE usuarios ADD COLUMN itens TEXT NOT NULL DEFAULT '[]'",
+    "ALTER TABLE usuarios ADD COLUMN moldura TEXT NOT NULL DEFAULT ''",
+    "ALTER TABLE usuarios ADD COLUMN congelar INTEGER NOT NULL DEFAULT 0",
+    "ALTER TABLE usuarios ADD COLUMN xp2_ate BIGINT NOT NULL DEFAULT 0",
     "ALTER TABLE posts ADD COLUMN formato TEXT NOT NULL DEFAULT 'post'",
     "ALTER TABLE denuncias ADD COLUMN resolvida INTEGER NOT NULL DEFAULT 0",
   ];

@@ -95,13 +95,13 @@ function lerCorpo(req) {
 // ---------- modelos ----------
 function pro(u) { return u.pro_ate > agora(); }
 function publico(u) {
-  return { id: u.id, nome: u.nome, avatar: u.avatar, foto: u.foto || 0, privado: !!u.privado, xp: u.xp, xpSemana: u.semana === semanaId() ? u.xp_semana : 0, streak: sequencia(u), pro: pro(u), professor: !!u.admin };
+  return { id: u.id, nome: u.nome, avatar: u.avatar, foto: u.foto || 0, moldura: u.moldura || '', privado: !!u.privado, xp: u.xp, xpSemana: u.semana === semanaId() ? u.xp_semana : 0, streak: sequencia(u), pro: pro(u), professor: !!u.admin };
 }
-function sequencia(u) { return (u.ultimo === diaStr() || u.ultimo === diaStr(agora() - DIA_MS)) ? u.streak : 0; }
+function sequencia(u) { return (u.ultimo === diaStr() || u.ultimo === diaStr(agora() - DIA_MS) || (u.congelar > 0 && u.ultimo === diaStr(agora() - 2 * DIA_MS))) ? u.streak : 0; }
 function privado(u) {
   return Object.assign(publico(u), {
     gemas: u.gemas, energia: pro(u) ? MAX_ENERGIA : u.vidas, maxEnergia: MAX_ENERGIA, proxima: (!pro(u) && u.vidas < MAX_ENERGIA) ? u.vidas_ts + REGEN_MS : 0,
-    proAte: u.pro_ate, fotoPend: u.foto_pend || 0, aceitou: !!u.aceitou, progresso: JSON.parse(u.progresso || '{}'), xpHoje: u.dia === diaStr() ? u.xp_dia : 0, agora: agora(),
+    proAte: u.pro_ate, itens: JSON.parse(u.itens || '[]'), congelar: u.congelar || 0, xp2Ate: u.xp2_ate || 0, fotoPend: u.foto_pend || 0, aceitou: !!u.aceitou, progresso: JSON.parse(u.progresso || '{}'), xpHoje: u.dia === diaStr() ? u.xp_dia : 0, agora: agora(),
   });
 }
 async function recarregarEnergia(u) {
@@ -220,15 +220,20 @@ rota('POST', '/api/missao/concluir', async (c) => {
   const t = agora(), hoje = diaStr(t), sem = semanaId(t);
   if (t - u.ultima_licao < MIN_ENTRE_LICOES) throw erro(429, 'Calma! Faça a missão com atenção.');
   const xpDia = u.dia === hoje ? u.xp_dia : 0;
+  if (u.xp2_ate > t) xp = Math.min(xp * 2, XP_MAX_LICAO);   // pontos em dobro (loja)
   xp = Math.max(0, Math.min(xp, XP_MAX_DIA - xpDia));
   const xpSem = u.semana === sem ? u.xp_semana : 0;
-  let streak = u.streak;
-  if (u.ultimo !== hoje) streak = u.ultimo === diaStr(t - DIA_MS) ? u.streak + 1 : 1;
+  let streak = u.streak, congelar = u.congelar || 0;
+  if (u.ultimo !== hoje) {
+    if (u.ultimo === diaStr(t - DIA_MS)) streak = u.streak + 1;
+    else if (congelar > 0 && u.ultimo === diaStr(t - 2 * DIA_MS)) { streak = u.streak + 1; congelar--; }   // a proteção salva a sequência
+    else streak = 1;
+  }
   const prog = JSON.parse(u.progresso || '{}');
   if (chave) prog[chave] = Math.max(prog[chave] || 0, estrelas);
   const moedas = 5 + (estrelas === 3 ? 3 : 0);
-  const r = await q(`UPDATE usuarios SET xp=xp+$1, xp_semana=$2, semana=$3, xp_dia=$4, dia=$5, streak=$6, ultimo=$7, progresso=$8, gemas=gemas+$9, ultima_licao=$10 WHERE id=$11 RETURNING *`,
-    [xp, xpSem + xp, sem, xpDia + xp, hoje, streak, hoje, JSON.stringify(prog), moedas, t, u.id]);
+  const r = await q(`UPDATE usuarios SET xp=xp+$1, xp_semana=$2, semana=$3, xp_dia=$4, dia=$5, streak=$6, ultimo=$7, progresso=$8, gemas=gemas+$9, ultima_licao=$10, congelar=$12 WHERE id=$11 RETURNING *`,
+    [xp, xpSem + xp, sem, xpDia + xp, hoje, streak, hoje, JSON.stringify(prog), moedas, t, u.id, congelar]);
   evento(u.id, 'missao', 1); evento(u.id, 'xp', xp);
   return Object.assign(privado(r[0]), { ganhou: { xp, moedas } });
 });
@@ -926,21 +931,103 @@ rota('POST', '/api/professor/confiavel', async (c) => {
   return { ok: true };
 });
 
+// ---------- estudos (livro de referência) e histórias ----------
+rota('GET', '/api/leituras', async (c) => {
+  const u = await exigirLogin(c.req);
+  const rows = await q('SELECT tipo, item, valor FROM leituras WHERE usuario=$1', [u.id]);
+  return { estudos: rows.filter((r) => r.tipo === 'estudo').map((r) => r.item), historias: Object.fromEntries(rows.filter((r) => r.tipo === 'historia').map((r) => [r.item, r.valor])) };
+});
+async function registrarLeitura(u, tipo, item, valor, moedas) {
+  limitar('leit:' + u.id, 60, 3600000);
+  const ja = (await q('SELECT 1 AS x FROM leituras WHERE usuario=$1 AND tipo=$2 AND item=$3', [u.id, tipo, item])).length > 0;
+  if (ja) { if (tipo === 'historia') await q('UPDATE leituras SET valor=$1 WHERE usuario=$2 AND tipo=$3 AND item=$4 AND valor<$1', [valor, u.id, tipo, item]); return { novo: false, u }; }
+  await q('INSERT INTO leituras (usuario, tipo, item, valor, criado) VALUES ($1,$2,$3,$4,$5)', [u.id, tipo, item, valor, agora()]);
+  evento(u.id, tipo);
+  return { novo: true, u: (await q('UPDATE usuarios SET gemas=gemas+$1 WHERE id=$2 RETURNING *', [moedas, u.id]))[0] };
+}
+rota('POST', '/api/estudos/lido', async (c) => {
+  const u = await exigirLogin(c.req);
+  const id = String(c.corpo.id || '');
+  const n = /^e(\d{1,2})$/.test(id) ? Number(id.slice(1)) : 0;
+  if (n < 1 || n > 50) throw erro(400, 'Material inválido');
+  const r = await registrarLeitura(u, 'estudo', id, 1, 1);
+  return Object.assign(privado(r.u), { ganhou: r.novo ? { moedas: 1 } : { moedas: 0 } });
+});
+rota('POST', '/api/historia/concluir', async (c) => {
+  const u = await exigirLogin(c.req);
+  const id = String(c.corpo.id || '');
+  const n = /^h(\d{1,2})$/.test(id) ? Number(id.slice(1)) : 0;
+  if (n < 1 || n > 12) throw erro(400, 'História inválida');
+  const acertos = Math.max(0, Math.min(3, parseInt(c.corpo.acertos, 10) || 0));
+  const moedas = 3 + (acertos === 3 ? 2 : 0);
+  const r = await registrarLeitura(u, 'historia', id, acertos, moedas);
+  return Object.assign(privado(r.u), { ganhou: { moedas: r.novo ? moedas : 0 } });
+});
+
+// ---------- loja ----------
+const MOLDURAS = { ouro: ['Moldura dourada', 60], neon: ['Moldura neon', 80], fogo: ['Moldura de fogo', 120], arco: ['Moldura arco-íris', 150] };
+const LOJA = {
+  energia1: { nome: '⚡ 1 energia', desc: 'Volta uma energia agora.', preco: 5 },
+  energiacheia: { nome: '🔋 Energia cheia', desc: 'Enche as 5 energias.', preco: 20 },
+  congelar: { nome: '🧊 Proteção de sequência', desc: 'Se você perder 1 dia, sua sequência 🔥 não zera. Guarde até 2.', preco: 30 },
+  xp2: { nome: '🚀 Pontos em dobro (1 h)', desc: 'Todas as missões valem o dobro por 1 hora.', preco: 40 },
+};
+rota('GET', '/api/loja', async (c) => {
+  const u = await exigirLogin(c.req);
+  const donos = JSON.parse(u.itens || '[]');
+  return {
+    itens: Object.keys(LOJA).map((k) => Object.assign({ id: k }, LOJA[k])),
+    molduras: Object.keys(MOLDURAS).map((k) => ({ id: k, nome: MOLDURAS[k][0], preco: MOLDURAS[k][1], tenho: donos.includes(k) })),
+    moldura: u.moldura || '',
+  };
+});
+rota('POST', '/api/loja/comprar', async (c) => {
+  const u = await exigirLogin(c.req); exigirPublicar(u);
+  limitar('loja:' + u.id, 60, 3600000);
+  const id = String(c.corpo.item || '');
+  const donos = JSON.parse(u.itens || '[]');
+  let preco;
+  if (LOJA[id]) {
+    preco = LOJA[id].preco;
+    if ((id === 'energia1' || id === 'energiacheia') && pro(u)) throw erro(400, 'Você é Pro: sua energia já é ilimitada.');
+    if ((id === 'energia1' || id === 'energiacheia') && u.vidas >= MAX_ENERGIA) throw erro(400, 'Sua energia já está cheia.');
+    if (id === 'congelar' && (u.congelar || 0) >= 2) throw erro(400, 'Você já guarda 2 proteções.');
+  } else if (MOLDURAS[id]) {
+    preco = MOLDURAS[id][1];
+    if (donos.includes(id)) throw erro(400, 'Você já tem esta moldura.');
+  } else throw erro(404, 'Item não encontrado');
+  const pago = await q('UPDATE usuarios SET gemas=gemas-$1 WHERE id=$2 AND gemas>=$1 RETURNING *', [preco, u.id]);   // só desconta se tiver saldo
+  if (!pago.length) throw erro(400, 'Moedas insuficientes. Faça missões e desafios para ganhar mais.');
+  let r;
+  if (id === 'energia1') r = await q('UPDATE usuarios SET vidas=vidas+1, vidas_ts=CASE WHEN vidas+1>=$1 THEN $2 ELSE vidas_ts END WHERE id=$3 RETURNING *', [MAX_ENERGIA, agora(), u.id]);
+  else if (id === 'energiacheia') r = await q('UPDATE usuarios SET vidas=$1, vidas_ts=$2 WHERE id=$3 RETURNING *', [MAX_ENERGIA, agora(), u.id]);
+  else if (id === 'congelar') r = await q('UPDATE usuarios SET congelar=congelar+1 WHERE id=$1 RETURNING *', [u.id]);
+  else if (id === 'xp2') r = await q('UPDATE usuarios SET xp2_ate=$1 WHERE id=$2 RETURNING *', [Math.max(agora(), u.xp2_ate || 0) + 3600000, u.id]);
+  else { donos.push(id); r = await q('UPDATE usuarios SET itens=$1, moldura=$2 WHERE id=$3 RETURNING *', [JSON.stringify(donos), id, u.id]); }
+  return privado(r[0]);
+});
+rota('POST', '/api/loja/equipar', async (c) => {
+  const u = await exigirLogin(c.req);
+  const id = String(c.corpo.moldura || '');
+  if (id && !JSON.parse(u.itens || '[]').includes(id)) throw erro(403, 'Você ainda não tem esta moldura.');
+  return privado((await q('UPDATE usuarios SET moldura=$1 WHERE id=$2 RETURNING *', [id, u.id]))[0]);
+});
+
 // ---------- desafios e metas ----------
-const METRICAS = { xp: 'pontos', missao: 'missões', post: 'posts publicados', comentario: 'comentários', curtida: 'curtidas dadas', seguir: 'pessoas seguidas', live_min: 'minutos assistindo lives', live_pico60: 'espectadores numa live de 1h' };
+const METRICAS = { historia: 'histórias lidas', estudo: 'materiais lidos', xp: 'pontos', missao: 'missões', post: 'posts publicados', comentario: 'comentários', curtida: 'curtidas dadas', seguir: 'pessoas seguidas', live_min: 'minutos assistindo lives', live_pico60: 'espectadores numa live de 1h' };
 function inicioSemana(t = agora()) { return semanaId(t) * 7 * DIA_MS + 4 * DIA_MS + 3 * 3600000; }
 function inicioDia(t = agora()) { return Date.parse(diaStr(t) + 'T00:00:00Z') + 3 * 3600000; }
 function desafiosFixos() {
-  const sem = semanaId(), ini = inicioSemana(), fimS = ini + 7 * DIA_MS, dia = diaStr(), ind = inicioDia();
-  const S = (k, titulo, metrica, meta, moedas) => ({ chave: 's' + sem + ':' + k, tipo: 'semana', titulo, metrica, meta, moedas, ini, fim: fimS });
-  return [
-    { chave: 'd' + dia + ':xp40', tipo: 'dia', titulo: 'Meta do dia: 40 pontos', metrica: 'xp', meta: 40, moedas: 3, ini: ind, fim: ind + DIA_MS },
-    S('xp200', 'Estudioso da semana: 200 pontos', 'xp', 200, 20),
-    S('mis6', 'Complete 6 missões', 'missao', 6, 25),
-    S('post1', 'Publique 1 post, reel ou story', 'post', 1, 10),
-    S('com3', 'Comente em 3 posts dos colegas', 'comentario', 3, 5),
-    S('seg3', 'Siga 3 colegas', 'seguir', 3, 5),
+  // Todos os desafios valem por 24 h (até a meia-noite de Brasília) e se renovam todo dia
+  const dia = diaStr(), ini = inicioDia(), fim = ini + DIA_MS;
+  const D = (k, titulo, metrica, meta, moedas) => ({ chave: 'd' + dia + ':' + k, tipo: 'dia', titulo, metrica, meta, moedas, ini, fim });
+  const sorteio = [
+    D('hist1', 'Leia e conclua 1 história', 'historia', 1, 5), D('est2', 'Leia 2 materiais do Livro', 'estudo', 2, 5), D('post1', 'Publique um post, reel ou story', 'post', 1, 10),
+    D('com3', 'Comente em 3 posts dos colegas', 'comentario', 3, 5), D('seg2', 'Siga 2 colegas', 'seguir', 2, 4), D('cur5', 'Curta 5 posts', 'curtida', 5, 3),
   ];
+  const n = Math.floor(ini / DIA_MS);   // escolhe 3 de 6, diferentes a cada dia
+  const escolhidos = sorteio.map((d, k) => ({ d, o: (k * 7 + n * 5 + k * k * n) % 97 })).sort((a, b) => a.o - b.o).slice(0, 3).map((x) => x.d);
+  return [D('xp60', 'Ganhe 60 pontos hoje', 'xp', 60, 6), D('mis3', 'Complete 3 missões', 'missao', 3, 8)].concat(escolhidos);
 }
 async function progressoDesafio(uid, d) {
   if (d.metrica === 'live_pico60') return Number((await q("SELECT COALESCE(MAX(pico),0) AS n FROM lives WHERE dono=$1 AND estado='encerrada' AND inicio>=$2 AND inicio<$3 AND fim-inicio>=3600000", [uid, d.ini, d.fim]))[0].n);
@@ -948,7 +1035,7 @@ async function progressoDesafio(uid, d) {
 }
 async function todosDesafios() {
   const fixos = desafiosFixos();
-  if ((await q('SELECT 1 AS x FROM lives WHERE inicio>=$1 LIMIT 1', [inicioSemana()])).length) fixos.push({ chave: 's' + semanaId() + ':livemin15', tipo: 'semana', titulo: 'Assista 15 minutos de live', metrica: 'live_min', meta: 15, moedas: 10, ini: inicioSemana(), fim: inicioSemana() + 7 * DIA_MS });
+  if ((await q('SELECT 1 AS x FROM lives WHERE inicio>=$1 LIMIT 1', [inicioDia()])).length) fixos.push({ chave: 'd' + diaStr() + ':livemin10', tipo: 'dia', titulo: 'Assista 10 minutos de live', metrica: 'live_min', meta: 10, moedas: 6, ini: inicioDia(), fim: inicioDia() + DIA_MS });
   const custom = (await q('SELECT * FROM desafios WHERE ativo=1 AND fim>$1 ORDER BY id DESC LIMIT 20', [agora()])).map((d) => ({ chave: 'c' + d.id, tipo: 'professor', titulo: d.titulo, metrica: d.metrica, meta: d.meta, moedas: d.moedas, ini: d.inicio, fim: d.fim, id: d.id }));
   return custom.concat(fixos);
 }

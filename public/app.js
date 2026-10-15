@@ -84,7 +84,7 @@
   function falha(e) { aviso(e.message, true); }
   // avatar: foto aprovada (se houver) ou emoji
   function av(p, extra) {
-    var el = h('div', { class: 'av' + (extra ? ' ' + extra : '') });
+    var el = h('div', { class: 'av' + (extra ? ' ' + extra : '') + (p.moldura ? ' m-' + p.moldura : '') });
     if (p.foto) el.append(h('img', { src: '/api/midia/' + p.foto, alt: p.nome || 'foto', loading: 'lazy' }));
     else el.append(p.avatar || '🙂');
     return el;
@@ -109,12 +109,20 @@
       h('div', { class: 'marca' }, h('div', { class: 'as' }, 'AS'), 'Aldemar English', U.pro ? h('span', { class: 'etiqueta' }, 'PRO') : null),
       h('div', { class: 'chips' },
         h('button', { class: 'chip energia' + (!U.pro && U.energia === 0 ? ' zero' : ''), 'aria-label': 'Energia', onclick: folhaEnergia }, energiaTxt()),
-        h('span', { class: 'chip', title: 'Moedas' }, '🪙 ' + U.gemas),
+        h('button', { class: 'chip', title: 'Moedas — abrir a loja', 'aria-label': 'Moedas, abrir a loja', onclick: function () { tela = 'loja'; render(); window.scrollTo(0, 0); } }, '🪙 ' + U.gemas),
         h('span', { class: 'chip', title: 'Sequência de dias' }, '🔥 ' + U.streak)));
   }
   function nav() {
-    function b(id, ic, t, ponto) { return h('button', { class: tela === id ? 'ativo' : '', onclick: function () { tela = id; if (id === 'comunidade') subCom = 'geral'; render(); window.scrollTo(0, 0); } }, h('span', {}, ic), t, ponto ? h('i', { class: 'ponto' }) : null); }
-    return h('nav', { class: 'nav' }, b('jornada', '🧭', 'Jornada'), b('ranking', '🏆', 'Ranking'), b('posts', '📸', 'Posts'), b('comunidade', '💬', 'Comunidade', temDm), b('perfil', '👤', 'Perfil'));
+    var ativoCom = tela === 'comunidade' || tela === 'ranking';
+    function b(id, ic, t, ponto) { return h('button', { class: (id === 'comunidade' ? ativoCom : tela === id) ? 'ativo' : '', 'aria-label': t, onclick: function () { tela = id; if (id === 'comunidade') subCom = 'geral'; render(); window.scrollTo(0, 0); } }, h('span', {}, ic), t, ponto ? h('i', { class: 'ponto' }) : null); }
+    return h('nav', { class: 'nav' }, b('jornada', '🧭', 'Jornada'), b('estudos', '📚', 'Estudos'), b('historias', '📖', 'História'), b('posts', '📸', 'Posts'), b('comunidade', '💬', 'Turma', temDm), b('perfil', '👤', 'Perfil'));
+  }
+  // abas da Turma: Ranking, Sala geral e Conversas
+  function abasTurma(ativa) {
+    return h('div', { class: 'seg tres' },
+      h('button', { class: ativa === 'ranking' ? 'ativo' : '', onclick: function () { tela = 'ranking'; render(); } }, '🏆 Ranking'),
+      h('button', { class: ativa === 'geral' ? 'ativo' : '', onclick: function () { tela = 'comunidade'; subCom = 'geral'; render(); } }, 'Sala geral'),
+      h('button', { class: ativa === 'conversas' ? 'ativo' : '', onclick: function () { tela = 'comunidade'; marcarDmVisto(); subCom = 'conversas'; render(); } }, 'Conversas', temDm ? h('i', { class: 'ponto' }) : null));
   }
   function render() {
     pararFala(); limparTimer();
@@ -123,6 +131,9 @@
     var main = h('main');
     if (tela === 'jornada') main.append(telaJornada());
     else if (tela === 'ranking') telaRanking(main);
+    else if (tela === 'estudos') M().estudos.tela(main);
+    else if (tela === 'historias') M().historias.tela(main);
+    else if (tela === 'loja') M().loja.tela(main);
     else if (tela === 'posts') M().posts.tela(main);
     else if (tela === 'visita') M().perfil.tela(main, visitaId, function () { tela = voltarPara; render(); });
     else if (tela === 'comunidade') telaComunidade(main);
@@ -156,6 +167,7 @@
         h('button', { class: 'btn ouro', disabled: U.energia >= U.maxEnergia || U.gemas < 20, onclick: function () {
           api('POST', '/api/energia/recarregar').then(function (u) { aplicar(u); fechar(); render(); aviso('Energia recarregada!'); }).catch(falha);
         } }, 'Recarregar tudo por 20 🪙'),
+        h('button', { class: 'btn sec', onclick: function () { fechar(); tela = 'loja'; render(); } }, '🛍️ Ver a loja'),
         h('button', { class: 'btn sec', onclick: function () { fechar(); tela = 'comunidade'; subCom = 'geral'; render(); } }, 'Pedir energia aos colegas'),
         h('button', { class: 'btn', onclick: function () { fechar(); tela = 'perfil'; render(); } }, 'Conhecer o Aldemar Pro')));
     } else c.append(h('button', { class: 'btn sec', onclick: function () { fechar(); } }, 'Fechar'));
@@ -268,7 +280,7 @@
     var seg = h('div', { class: 'seg' },
       h('button', { class: rankTipo === 'semana' ? 'ativo' : '', onclick: function () { rankTipo = 'semana'; render(); } }, 'Da semana'),
       h('button', { class: rankTipo === 'total' ? 'ativo' : '', onclick: function () { rankTipo = 'total'; render(); } }, 'Geral'));
-    main.append(h('h2', {}, '🏆 Ranking'), seg, corpo);
+    main.append(abasTurma('ranking'), seg, corpo);
     api('GET', '/api/ranking?tipo=' + rankTipo).then(function (r) {
       corpo.replaceChildren();
       corpo.append(h('p', { class: 'mudo peq', style: 'margin-top:0' }, rankTipo === 'semana'
@@ -289,10 +301,8 @@
   function marcarDmVisto() { gravar('ae_dm_visto', Date.now()); temDm = false; }
   function telaComunidade(main) {
     if (subCom === 'conversa' && conversaCom) { telaConversa(main); return; }
-    var seg = h('div', { class: 'seg' },
-      h('button', { class: subCom === 'geral' ? 'ativo' : '', onclick: function () { subCom = 'geral'; render(); } }, 'Sala geral'),
-      h('button', { class: subCom === 'conversas' ? 'ativo' : '', onclick: function () { marcarDmVisto(); subCom = 'conversas'; render(); } }, 'Conversas', temDm ? h('i', { class: 'ponto' }) : null));
-    main.append(h('h2', {}, '💬 Comunidade'), seg);
+    var seg = abasTurma(subCom);
+    main.append(seg);
     if (subCom === 'geral') {
       main.append(h('p', { class: 'mudo peq', style: 'margin-top:0' }, 'Sala da turma. Escreva em inglês para praticar! Links não são permitidos e o professor modera.'));
       montarChat(main, '/api/chat', '/api/chat');
@@ -408,7 +418,7 @@
         h('div', { class: 'card' }, h('div', { class: 'num' }, '📘 ' + feitas + '/' + total), h('div', { class: 'mudo peq' }, 'missões'))),
       cartaoPro(),
       M().notif ? M().notif.cartao() : null,
-      h('div', { class: 'card' }, h('h3', {}, 'Como ganhar moedas'), h('p', { class: 'mudo', style: 'margin:0' }, 'Cada missão concluída dá 5 moedas (8 com 3 selos). Use para recarregar sua energia ou presentear colegas.')),
+      h('div', { class: 'card' }, h('h3', {}, 'Como ganhar moedas'), h('p', { class: 'mudo', style: 'margin:0 0 10px' }, 'Missões (5, ou 8 com 3 selos), materiais de Estudos, Histórias e desafios do dia. Gaste na loja: energia, proteção de sequência, pontos em dobro e molduras.'), h('button', { class: 'btn ouro', onclick: function () { tela = 'loja'; render(); window.scrollTo(0, 0); } }, '🛍️ Abrir a loja')),
       h('div', { class: 'card' }, h('h3', {}, 'Conquistas'),
         CONQUISTAS.map(function (q) { return h('div', { class: 'conq' + (q.ok() ? '' : ' off') }, h('div', { class: 'ic' }, q.ic), h('div', {}, h('b', {}, q.t), h('div', { class: 'mudo peq' }, q.d))); })),
       U.professor ? h('button', { class: 'btn', onclick: function () { tela = 'painel'; render(); } }, '🎓 Painel do professor') : null,

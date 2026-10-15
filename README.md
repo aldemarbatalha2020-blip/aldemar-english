@@ -32,3 +32,10 @@ Node + Postgres (`pg`). Sem frameworks no servidor.
 ## Plano Pro
 Energia ilimitada. O professor gera códigos no painel (30/90/180/365 dias) e o aluno resgata no Perfil.
 Não há cobrança automática: o pagamento (ex.: Pix) é combinado fora do app.
+
+
+## Estudos, História e Loja
+- **Estudos**: livro de referência com 50 materiais (7 categorias), busca, áudio nos exemplos; +1 moeda por material novo.
+- **História**: 12 histórias curtas do dia a dia, com voz, tradução opcional, vocabulário e 3 perguntas (+3 moedas, +2 se acertar tudo).
+- **Desafios**: todos valem 24 h e renovam à meia-noite (Brasília); o professor pode criar desafios de 24 h a 7 dias.
+- **Loja**: energia (5/20 moedas), proteção de sequência (30), pontos em dobro por 1 h (40) e molduras de avatar (60–150).
