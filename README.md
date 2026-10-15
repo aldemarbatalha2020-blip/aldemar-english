@@ -17,6 +17,13 @@ Node + Postgres (`pg`). Sem frameworks no servidor.
 - Denúncias exigem motivo; 3 denúncias escondem o conteúdo até o professor decidir; só o professor silencia alunos.
 - Áudios do chat são apagados após 30 dias; limite de 350 MB de mídia no banco.
 
+## Perfis, stories, reels, chamadas e desafios
+- Perfil público ou privado; seguir (privado exige aceitar o pedido); grade de posts no perfil.
+- Posts: foto, vídeo até 1:30, reel (até 1 min) e story (24 h). Alunos "de confiança" (marcados pelo professor) publicam sem aprovação prévia.
+- Fotos no chat: sala geral e conversas entre quem se segue mutuamente. Chamadas de áudio/vídeo: idem (professor pode chamar qualquer aluno).
+- Chamadas usam WebRTC com servidores STUN gratuitos. Para redes difíceis (4G de algumas operadoras), defina `TURN_URL`, `TURN_USER`, `TURN_PASS` (ex.: um serviço TURN gratuito/pago).
+- Desafios do dia/semana automáticos + desafios criados pelo professor (moedas de recompensa).
+
 ## Plano Pro
 Energia ilimitada. O professor gera códigos no painel (30/90/180/365 dias) e o aluno resgata no Perfil.
 Não há cobrança automática: o pagamento (ex.: Pix) é combinado fora do app.

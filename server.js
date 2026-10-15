@@ -95,7 +95,7 @@ function lerCorpo(req) {
 // ---------- modelos ----------
 function pro(u) { return u.pro_ate > agora(); }
 function publico(u) {
-  return { id: u.id, nome: u.nome, avatar: u.avatar, foto: u.foto || 0, xp: u.xp, xpSemana: u.semana === semanaId() ? u.xp_semana : 0, streak: sequencia(u), pro: pro(u), professor: !!u.admin };
+  return { id: u.id, nome: u.nome, avatar: u.avatar, foto: u.foto || 0, privado: !!u.privado, xp: u.xp, xpSemana: u.semana === semanaId() ? u.xp_semana : 0, streak: sequencia(u), pro: pro(u), professor: !!u.admin };
 }
 function sequencia(u) { return (u.ultimo === diaStr() || u.ultimo === diaStr(agora() - DIA_MS)) ? u.streak : 0; }
 function privado(u) {
@@ -143,6 +143,13 @@ function exigirPublicar(u) {
   if (u.banido) throw erro(403, 'Sua conta está silenciada pelo professor');
   if (!u.aceitou) throw erro(403, 'Aceite as regras da comunidade para participar');
 }
+
+function evento(uid, tipo, valor = 1) { if (valor > 0) q('INSERT INTO eventos (usuario, tipo, valor, criado) VALUES ($1,$2,$3,$4)', [uid, tipo, valor, agora()]).catch(() => {}); }
+// Relação de quem vê com o dono do conteúdo: perfis privados só mostram posts a seguidores aprovados
+async function segue(a, b) { return (await q("SELECT 1 AS x FROM seguidores WHERE seguidor=$1 AND seguido=$2 AND estado='ativo'", [a, b])).length > 0; }
+async function podeVer(viewer, dono) { return viewer.id === dono.id || !!viewer.admin || !dono.privado || await segue(viewer.id, dono.id); }
+const VISIVEL_SQL = "(d.privado=0 OR d.id=$2 OR $3=1 OR EXISTS (SELECT 1 FROM seguidores s WHERE s.seguidor=$2 AND s.seguido=d.id AND s.estado='ativo'))";
+const STORY_MS = DIA_MS;
 
 // ---------- rotas ----------
 // Chave do professor enviada na tela inicial: true = válida, false = não enviada; erro 403 se errada
@@ -222,6 +229,7 @@ rota('POST', '/api/missao/concluir', async (c) => {
   const moedas = 5 + (estrelas === 3 ? 3 : 0);
   const r = await q(`UPDATE usuarios SET xp=xp+$1, xp_semana=$2, semana=$3, xp_dia=$4, dia=$5, streak=$6, ultimo=$7, progresso=$8, gemas=gemas+$9, ultima_licao=$10 WHERE id=$11 RETURNING *`,
     [xp, xpSem + xp, sem, xpDia + xp, hoje, streak, hoje, JSON.stringify(prog), moedas, t, u.id]);
+  evento(u.id, 'missao', 1); evento(u.id, 'xp', xp);
   return Object.assign(privado(r[0]), { ganhou: { xp, moedas } });
 });
 
@@ -299,9 +307,21 @@ async function novaMensagem(u, para, corpo) {
     await q('UPDATE midias SET usada=1, estado=$1 WHERE id=$2', ['aprovada', m.id]);
     return (await q("INSERT INTO mensagens (de, para, texto, criado, tipo, midia) VALUES ($1,$2,'',$3,'audio',$4) RETURNING *", [u.id, para, agora(), m.id]))[0];
   }
+  if (corpo.tipo === 'foto') {
+    limitar('fotomsg:' + u.id, 10, 3600000);
+    if (para > 0) {
+      const o = await usuarioPorId(para);
+      const mutuo = o && (o.admin || u.admin || ((await segue(u.id, para)) && (await segue(para, u.id))));
+      if (!mutuo) throw erro(403, 'Fotos no chat privado só entre quem se segue (os dois precisam se seguir).');
+    }
+    const m = (await q("SELECT * FROM midias WHERE id=$1 AND dono=$2 AND contexto='chat' AND usada=0", [Number(corpo.midia), u.id]))[0];
+    if (!m) throw erro(400, 'Foto inválida');
+    await q('UPDATE midias SET usada=1 WHERE id=$1', [m.id]);
+    return (await q("INSERT INTO mensagens (de, para, texto, criado, tipo, midia) VALUES ($1,$2,'',$3,'foto',$4) RETURNING *", [u.id, para, agora(), m.id]))[0];
+  }
   return (await q('INSERT INTO mensagens (de, para, texto, criado) VALUES ($1,$2,$3,$4) RETURNING *', [u.id, para, validarTexto(corpo.texto), agora()]))[0];
 }
-function resumoMsg(m) { return m.tipo === 'audio' ? '🎤 enviou um áudio' : m.texto.slice(0, 90); }
+function resumoMsg(m) { return m.tipo === 'audio' ? '🎤 enviou um áudio' : (m.tipo === 'foto' ? '📷 enviou uma foto' : m.texto.slice(0, 90)); }
 const ultimoGeral = new Map();
 rota('POST', '/api/chat', async (c) => {
   const u = await exigirLogin(c.req);
@@ -503,7 +523,8 @@ function detectar(b) {
 const REGRAS_UP = {
   perfil: { max: 600 * 1024, mimes: { jpeg: 'image/jpeg', png: 'image/png', webp: 'image/webp' }, ctx: 'perfil' },
   foto: { max: 1600 * 1024, mimes: { jpeg: 'image/jpeg', png: 'image/png', webp: 'image/webp' }, ctx: 'post' },
-  video: { max: 15 * 1024 * 1024, mimes: { mp4: 'video/mp4', webm: 'video/webm' }, ctx: 'post' },
+  chatfoto: { max: 900 * 1024, mimes: { jpeg: 'image/jpeg', png: 'image/png', webp: 'image/webp' }, ctx: 'chat' },
+  video: { max: 20 * 1024 * 1024, mimes: { mp4: 'video/mp4', webm: 'video/webm' }, ctx: 'post' },
   audio: { max: 1536 * 1024, mimes: { webm: 'audio/webm', mp4: 'audio/mp4', ogg: 'audio/ogg', mp3: 'audio/mpeg' }, ctx: 'audio' },
 };
 function lerBruto(req, max) {
@@ -531,7 +552,7 @@ rota('POST', '/api/upload', async (c) => {
   const mime = regra.mimes[detectar(buf)];
   if (!mime) throw erro(400, 'Formato não aceito');
   if ((await usoArmazenamento()) + buf.length > LIM_ARMAZ) throw erro(507, 'O armazenamento da turma está cheio. Avise o professor.');
-  const estadoInicial = regra.ctx === 'audio' ? 'aprovada' : 'pendente';
+  const estadoInicial = (regra.ctx === 'audio' || regra.ctx === 'chat') ? 'aprovada' : 'pendente';
   const r = await q('INSERT INTO midias (dono, mime, dados, tam, contexto, estado, criado) VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id', [u.id, mime, buf, buf.length, regra.ctx, estadoInicial, agora()]);
   return { id: r[0].id, mime };
 }, { bruto: true });
@@ -544,12 +565,16 @@ rota('GET', '/api/midia/:id', async (c) => {
   if (m.tam === 0) throw erro(410, 'Arquivo removido');
   let ok = !!u.admin || m.dono === u.id;
   if (!ok) {
-    if (m.contexto === 'audio') {
+    if (m.contexto === 'audio' || m.contexto === 'chat') {
       const msg = (await q('SELECT de, para FROM mensagens WHERE midia=$1 AND apagada=0 LIMIT 1', [id]))[0];
       ok = !!msg && (msg.para === 0 || msg.para === u.id);
     } else if (m.estado === 'aprovada') {
       ok = true;
-      if (m.contexto === 'post') { const p = (await q('SELECT ocultar, estado FROM posts WHERE midia=$1', [id]))[0]; ok = !!p && !p.ocultar && p.estado === 'publicado'; }
+      if (m.contexto === 'post') {
+        const p = (await q('SELECT * FROM posts WHERE midia=$1', [id]))[0];
+        ok = !!p && !p.ocultar && p.estado === 'publicado' && !(p.formato === 'story' && p.criado < agora() - STORY_MS);
+        if (ok) { const dono = await usuarioPorId(p.dono); ok = !!dono && !dono.banido && await podeVer(u, dono); }
+      }
     }
   }
   if (!ok) throw erro(403, 'Sem permissão');
@@ -587,35 +612,88 @@ rota('DELETE', '/api/perfil/foto', async (c) => {
   return privado((await q('UPDATE usuarios SET foto=0, foto_pend=0 WHERE id=$1 RETURNING *', [u.id]))[0]);
 });
 
-// ---------- posts (fotos, vídeos curtos/reels) ----------
+// ---------- posts (fotos, vídeos, reels e stories) ----------
+const FORMATOS = ['post', 'reel', 'story'];
 async function postView(p, u) {
   const dono = await usuarioPorId(p.dono);
   const eu = (await q('SELECT 1 AS x FROM curtidas WHERE post=$1 AND usuario=$2', [p.id, u.id])).length > 0;
   const nc = (await q('SELECT COUNT(*) AS n FROM comentarios WHERE post=$1 AND apagada=0', [p.id]))[0].n;
-  return { id: p.id, dono: dono ? publico(dono) : { id: p.dono, nome: '?', avatar: '🙂', foto: 0 }, legenda: p.legenda, tipo: p.tipo, midia: p.midia, estado: p.estado, curtidas: p.curtidas, euCurti: eu, comentarios: Number(nc), criado: p.criado };
+  return { id: p.id, dono: dono ? publico(dono) : { id: p.dono, nome: '?', avatar: '🙂', foto: 0 }, legenda: p.legenda, tipo: p.tipo, formato: p.formato || 'post', midia: p.midia, estado: p.estado, curtidas: p.curtidas, euCurti: eu, comentarios: Number(nc), criado: p.criado };
+}
+async function listarPosts(u, onde, params, limite) {
+  // onde: condição extra; params: valores extras a partir de $4
+  return q(`SELECT p.* FROM posts p JOIN usuarios d ON d.id=p.dono WHERE p.estado='publicado' AND p.ocultar=0 AND d.banido=0 AND p.id<$1 AND ${VISIVEL_SQL} ${onde} ORDER BY p.id DESC LIMIT ${limite}`,
+    [params.antes, u.id, u.admin ? 1 : 0].concat(params.extra || []));
 }
 rota('GET', '/api/posts', async (c) => {
   const u = await exigirLogin(c.req);
   const antes = parseInt(c.url.searchParams.get('antes'), 10) || 9e15;
-  const rows = await q("SELECT p.* FROM posts p JOIN usuarios d ON d.id=p.dono WHERE p.estado='publicado' AND p.ocultar=0 AND d.banido=0 AND p.id<$1 ORDER BY p.id DESC LIMIT 8", [antes]);
+  const filtro = c.url.searchParams.get('filtro'), reels = c.url.searchParams.get('formato') === 'reel';
+  let onde = reels ? "AND p.formato='reel'" : "AND p.formato IN ('post','reel')";
+  if (filtro === 'seguindo') onde += " AND (d.id=$2 OR EXISTS (SELECT 1 FROM seguidores s2 WHERE s2.seguidor=$2 AND s2.seguido=d.id AND s2.estado='ativo'))";
+  const rows = await listarPosts(u, onde, { antes }, 8);
   const lista = [];
-  if (!c.url.searchParams.get('antes')) for (const p of await q("SELECT * FROM posts WHERE dono=$1 AND estado='pendente' ORDER BY id DESC", [u.id])) lista.push(await postView(p, u));
+  if (!c.url.searchParams.get('antes') && !reels) for (const p of await q("SELECT * FROM posts WHERE dono=$1 AND estado='pendente' AND formato IN ('post','reel') ORDER BY id DESC", [u.id])) lista.push(await postView(p, u));
   for (const p of rows) lista.push(await postView(p, u));
   return { posts: lista, fim: rows.length < 8 };
 });
+rota('GET', '/api/posts/:id', async (c) => {
+  const u = await exigirLogin(c.req);
+  const p = (await q('SELECT * FROM posts WHERE id=$1', [Number(c.params.id)]))[0];
+  if (!p) throw erro(404, 'Post não encontrado');
+  const dono = await usuarioPorId(p.dono);
+  const meu = p.dono === u.id;
+  if (!meu && !u.admin && (p.estado !== 'publicado' || p.ocultar || dono.banido || !(await podeVer(u, dono)) || (p.formato === 'story' && p.criado < agora() - STORY_MS))) throw erro(404, 'Post não disponível');
+  return postView(p, u);
+});
+// posts de uma pessoa (grade do perfil)
+rota('GET', '/api/usuario/:id/posts', async (c) => {
+  const u = await exigirLogin(c.req);
+  const d = await usuarioPorId(Number(c.params.id));
+  if (!d) throw erro(404, 'Aluno não encontrado');
+  if (d.banido && !u.admin) return { posts: [], fim: true, restrito: true };
+  if (!(await podeVer(u, d))) return { posts: [], fim: true, restrito: true };
+  const antes = parseInt(c.url.searchParams.get('antes'), 10) || 9e15;
+  const meu = d.id === u.id;
+  const rows = await q(`SELECT * FROM posts WHERE dono=$1 AND formato IN ('post','reel') AND id<$2 AND ${meu || u.admin ? "estado IN ('publicado','pendente')" : "estado='publicado' AND ocultar=0"} ORDER BY id DESC LIMIT 24`, [d.id, antes]);
+  const lista = [];
+  for (const p of rows) lista.push(await postView(p, u));
+  return { posts: lista, fim: rows.length < 24 };
+});
+// stories: últimas 24 h de quem a pessoa pode ver
+rota('GET', '/api/stories', async (c) => {
+  const u = await exigirLogin(c.req);
+  const rows = await q(`SELECT p.* FROM posts p JOIN usuarios d ON d.id=p.dono WHERE p.formato='story' AND p.estado='publicado' AND p.ocultar=0 AND d.banido=0 AND p.criado>$4 AND p.id<$1 AND ${VISIVEL_SQL} ORDER BY p.id ASC LIMIT 300`,
+    [9e15, u.id, u.admin ? 1 : 0, agora() - STORY_MS]);
+  const por = new Map();
+  for (const p of rows) { if (!por.has(p.dono)) por.set(p.dono, []); por.get(p.dono).push({ id: p.id, midia: p.midia, tipo: p.tipo, legenda: p.legenda, criado: p.criado }); }
+  const out = [];
+  for (const [id, itens] of por) { const d = await usuarioPorId(id); if (d) out.push({ dono: publico(d), itens }); }
+  out.sort((a, b) => (a.dono.id === u.id ? -1 : b.dono.id === u.id ? 1 : b.itens[b.itens.length - 1].criado - a.itens[a.itens.length - 1].criado));
+  return out;
+});
 rota('POST', '/api/posts', async (c) => {
   const u = await exigirLogin(c.req); exigirPublicar(u);
-  limitar('post:' + u.id, 6, 3600000);
+  limitar('post:' + u.id, 12, 3600000);
   const m = (await q("SELECT * FROM midias WHERE id=$1 AND dono=$2 AND contexto='post' AND usada=0", [Number(c.corpo.midia), u.id]))[0];
   if (!m) throw erro(400, 'Arquivo inválido');
   const legenda = validarTexto(c.corpo.legenda, 200, true);
   const tipo = m.mime.startsWith('video') ? 'video' : 'foto';
-  const direto = !!u.admin;
+  const formato = FORMATOS.includes(c.corpo.formato) ? c.corpo.formato : 'post';
+  if (formato === 'reel' && tipo !== 'video') throw erro(400, 'Reels são vídeos');
+  const direto = !!u.admin || !!u.confiavel;
   await q('UPDATE midias SET usada=1, estado=$1 WHERE id=$2', [direto ? 'aprovada' : 'pendente', m.id]);
-  const r = await q('INSERT INTO posts (dono, legenda, midia, tipo, estado, criado) VALUES ($1,$2,$3,$4,$5,$6) RETURNING *', [u.id, legenda, m.id, tipo, direto ? 'publicado' : 'pendente', agora()]);
-  if (!direto) notificarProfessores({ titulo: 'Post para aprovar', corpo: u.nome + ' enviou um ' + (tipo === 'video' ? 'vídeo' : 'foto') + '.', url: '#painel', tag: 'aprovar' });
+  const r = await q('INSERT INTO posts (dono, legenda, midia, tipo, estado, criado, formato) VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *', [u.id, legenda, m.id, tipo, direto ? 'publicado' : 'pendente', agora(), formato]);
+  if (direto) evento(u.id, 'post'); else notificarProfessores({ titulo: 'Post para aprovar', corpo: u.nome + ' enviou ' + (formato === 'story' ? 'um story' : formato === 'reel' ? 'um reel' : (tipo === 'video' ? 'um vídeo' : 'uma foto')) + '.', url: '#painel', tag: 'aprovar' });
+  if (direto && formato !== 'story') avisarSeguidores(u, 'publicou ' + (formato === 'reel' ? 'um reel' : 'um post'), r[0].id);
   return postView(r[0], u);
 });
+// aviso aos seguidores (somente quem tem push ativo)
+async function avisarSeguidores(u, texto, postId) {
+  if (!webpush) return;
+  const ids = (await q("SELECT seguidor FROM seguidores WHERE seguido=$1 AND estado='ativo' LIMIT 200", [u.id])).map((r) => r.seguidor);
+  notificar(ids, { titulo: u.nome, corpo: texto, url: '#post-' + postId, tag: 'seg-' + u.id });
+}
 rota('DELETE', '/api/posts/:id', async (c) => {
   const u = await exigirLogin(c.req);
   const p = (await q('SELECT * FROM posts WHERE id=$1', [Number(c.params.id)]))[0];
@@ -628,14 +706,16 @@ rota('DELETE', '/api/posts/:id', async (c) => {
 rota('POST', '/api/posts/:id/curtir', async (c) => {
   const u = await exigirLogin(c.req); exigirPublicar(u);
   const p = (await q("SELECT * FROM posts WHERE id=$1 AND estado='publicado' AND ocultar=0", [Number(c.params.id)]))[0];
-  if (!p) throw erro(404, 'Post não encontrado');
+  if (!p || !(await podeVer(u, await usuarioPorId(p.dono)))) throw erro(404, 'Post não encontrado');
   const ja = (await q('SELECT 1 AS x FROM curtidas WHERE post=$1 AND usuario=$2', [p.id, u.id])).length > 0;
   if (ja) { await q('DELETE FROM curtidas WHERE post=$1 AND usuario=$2', [p.id, u.id]); await q('UPDATE posts SET curtidas=curtidas-1 WHERE id=$1 AND curtidas>0', [p.id]); }
-  else { await q('INSERT INTO curtidas (post, usuario) VALUES ($1,$2)', [p.id, u.id]); await q('UPDATE posts SET curtidas=curtidas+1 WHERE id=$1', [p.id]); }
+  else { await q('INSERT INTO curtidas (post, usuario) VALUES ($1,$2)', [p.id, u.id]); await q('UPDATE posts SET curtidas=curtidas+1 WHERE id=$1', [p.id]); evento(u.id, 'curtida'); }
   return { curtidas: (await q('SELECT curtidas FROM posts WHERE id=$1', [p.id]))[0].curtidas, euCurti: !ja };
 });
 rota('GET', '/api/posts/:id/comentarios', async (c) => {
-  await exigirLogin(c.req);
+  const u = await exigirLogin(c.req);
+  const pp = (await q('SELECT dono FROM posts WHERE id=$1', [Number(c.params.id)]))[0];
+  if (!pp || !(await podeVer(u, await usuarioPorId(pp.dono)))) throw erro(404, 'Post não encontrado');
   const rows = await q('SELECT * FROM comentarios WHERE post=$1 AND apagada=0 ORDER BY id ASC LIMIT 100', [Number(c.params.id)]);
   const out = [];
   for (const m of rows) { const a = await usuarioPorId(m.de); out.push({ id: m.id, de: a ? publico(a) : { id: m.de, nome: '?', avatar: '🙂', foto: 0 }, texto: m.texto, criado: m.criado }); }
@@ -645,9 +725,10 @@ rota('POST', '/api/posts/:id/comentarios', async (c) => {
   const u = await exigirLogin(c.req); exigirPublicar(u);
   limitar('com:' + u.id, 20, 60000);
   const p = (await q("SELECT * FROM posts WHERE id=$1 AND estado='publicado' AND ocultar=0", [Number(c.params.id)]))[0];
-  if (!p) throw erro(404, 'Post não encontrado');
+  if (!p || !(await podeVer(u, await usuarioPorId(p.dono)))) throw erro(404, 'Post não encontrado');
   const texto = validarTexto(c.corpo.texto, 200);
   const r = await q('INSERT INTO comentarios (post, de, texto, criado) VALUES ($1,$2,$3,$4) RETURNING *', [p.id, u.id, texto, agora()]);
+  evento(u.id, 'comentario');
   if (p.dono !== u.id) notificar([p.dono], { titulo: u.nome + ' comentou no seu post', corpo: texto.slice(0, 90), url: '#posts', tag: 'post-' + p.id });
   return { id: r[0].id, de: publico(u), texto, criado: r[0].criado };
 });
@@ -714,7 +795,7 @@ rota('GET', '/api/professor/painel', async (c) => {
     denuncias.push(Object.assign(g, { conteudo, estado, autor: autor ? { id: autor.id, nome: autor.nome, banido: !!autor.banido, professor: !!autor.admin } : null }));
   }
   return {
-    alunos: alunos.map((a) => ({ id: a.id, nome: a.nome, avatar: a.avatar, xp: a.xp, pro: pro(a), proAte: a.pro_ate, banido: !!a.banido, streak: sequencia(a), visto: a.visto, criado: a.criado })),
+    alunos: alunos.map((a) => ({ id: a.id, nome: a.nome, avatar: a.avatar, xp: a.xp, pro: pro(a), proAte: a.pro_ate, banido: !!a.banido, confiavel: !!a.confiavel, streak: sequencia(a), visto: a.visto, criado: a.criado })),
     codigos: codigos.map((k) => ({ codigo: k.codigo, dias: k.dias, usado: !!k.usado_por })),
     pendentes, denuncias, armazenamento: { usado: await usoArmazenamento(), limite: LIM_ARMAZ },
   };
@@ -725,7 +806,11 @@ rota('POST', '/api/professor/aprovar', async (c) => {
   if (c.corpo.tipo === 'post') {
     const p = (await q("SELECT * FROM posts WHERE id=$1 AND estado='pendente'", [id]))[0];
     if (!p) throw erro(404, 'Post não encontrado');
-    if (aprovar) { await q("UPDATE posts SET estado='publicado' WHERE id=$1", [id]); await q("UPDATE midias SET estado='aprovada' WHERE id=$1", [p.midia]); }
+    if (aprovar) {
+      await q("UPDATE posts SET estado='publicado' WHERE id=$1", [id]); await q("UPDATE midias SET estado='aprovada' WHERE id=$1", [p.midia]);
+      evento(p.dono, 'post');
+      const dono = await usuarioPorId(p.dono); if (dono && p.formato !== 'story') avisarSeguidores(dono, 'publicou ' + (p.formato === 'reel' ? 'um reel' : 'um post'), p.id);
+    }
     else { await q("UPDATE posts SET estado='removido' WHERE id=$1", [id]); await liberarMidia(p.midia); }
     notificar([p.dono], { titulo: aprovar ? '✅ Post publicado!' : 'Post não aprovado', corpo: aprovar ? 'Seu post já aparece para a turma.' : 'O professor não aprovou este post.', url: '#posts', tag: 'post-ok' });
   } else {
@@ -755,8 +840,224 @@ rota('POST', '/api/professor/moderar', async (c) => {
   return { ok: true };
 });
 
+// ---------- perfis, seguir e privacidade ----------
+async function contagens(id) {
+  const n = async (sql) => Number((await q(sql, [id]))[0].n);
+  return {
+    seguidores: await n("SELECT COUNT(*) AS n FROM seguidores WHERE seguido=$1 AND estado='ativo'"),
+    seguindo: await n("SELECT COUNT(*) AS n FROM seguidores WHERE seguidor=$1 AND estado='ativo'"),
+    posts: await n("SELECT COUNT(*) AS n FROM posts WHERE dono=$1 AND estado='publicado' AND ocultar=0 AND formato IN ('post','reel')"),
+  };
+}
+rota('GET', '/api/perfil/:id', async (c) => {
+  const u = await exigirLogin(c.req);
+  const d = await usuarioPorId(Number(c.params.id));
+  if (!d || (d.banido && !u.admin && d.id !== u.id)) throw erro(404, 'Aluno não encontrado');
+  const prog = JSON.parse(d.progresso || '{}');
+  let relacao = 'nenhuma';
+  if (d.id === u.id) relacao = 'eu';
+  else { const r = (await q('SELECT estado FROM seguidores WHERE seguidor=$1 AND seguido=$2', [u.id, d.id]))[0]; if (r) relacao = r.estado === 'ativo' ? 'seguindo' : 'pedido'; }
+  const ver = await podeVer(u, d);
+  const story = (await q("SELECT 1 AS x FROM posts WHERE dono=$1 AND formato='story' AND estado='publicado' AND ocultar=0 AND criado>$2 LIMIT 1", [d.id, agora() - STORY_MS])).length > 0 && ver;
+  return Object.assign(publico(d), await contagens(d.id), {
+    bio: d.bio || '', missoes: Object.keys(prog).length, desde: d.criado, relacao, podeVer: ver, temStory: story,
+    segueVoce: relacao !== 'eu' && await segue(d.id, u.id), confiavel: u.admin ? !!d.confiavel : undefined,
+  });
+});
+rota('POST', '/api/perfil/config', async (c) => {
+  const u = await exigirLogin(c.req); exigirPublicar(u);
+  const bio = validarTexto(c.corpo.bio, 120, true);
+  const priv = c.corpo.privado ? 1 : 0;
+  const r = await q('UPDATE usuarios SET bio=$1, privado=$2 WHERE id=$3 RETURNING *', [bio, priv, u.id]);
+  if (!priv) await q("UPDATE seguidores SET estado='ativo' WHERE seguido=$1 AND estado='pedido'", [u.id]); // perfil público: pedidos pendentes são aceitos
+  return privado(r[0]);
+});
+rota('POST', '/api/seguir/:id', async (c) => {
+  const u = await exigirLogin(c.req); exigirPublicar(u);
+  limitar('seg:' + u.id, 60, 3600000);
+  const d = await usuarioPorId(Number(c.params.id));
+  if (!d || d.banido || d.id === u.id) throw erro(400, 'Aluno inválido');
+  if ((await q('SELECT 1 AS x FROM seguidores WHERE seguidor=$1 AND seguido=$2', [u.id, d.id])).length) return { relacao: (await segue(u.id, d.id)) ? 'seguindo' : 'pedido' };
+  const estado = d.privado && !d.admin ? 'pedido' : 'ativo';
+  await q('INSERT INTO seguidores (seguidor, seguido, estado, criado) VALUES ($1,$2,$3,$4)', [u.id, d.id, estado, agora()]);
+  if (estado === 'ativo') evento(u.id, 'seguir');
+  notificar([d.id], { titulo: estado === 'pedido' ? 'Pedido para seguir' : 'Novo seguidor', corpo: u.nome + (estado === 'pedido' ? ' quer te seguir.' : ' começou a te seguir.'), url: estado === 'pedido' ? '#perfil' : '#perfil-' + u.id, tag: 'seguir-' + u.id });
+  return { relacao: estado === 'ativo' ? 'seguindo' : 'pedido' };
+});
+rota('DELETE', '/api/seguir/:id', async (c) => {
+  const u = await exigirLogin(c.req);
+  await q('DELETE FROM seguidores WHERE seguidor=$1 AND seguido=$2', [u.id, Number(c.params.id)]);
+  return { relacao: 'nenhuma' };
+});
+rota('GET', '/api/pedidos', async (c) => {
+  const u = await exigirLogin(c.req);
+  const rows = await q("SELECT seguidor FROM seguidores WHERE seguido=$1 AND estado='pedido' ORDER BY criado ASC LIMIT 50", [u.id]);
+  const out = []; for (const r of rows) { const d = await usuarioPorId(r.seguidor); if (d && !d.banido) out.push(publico(d)); }
+  return out;
+});
+rota('POST', '/api/pedidos/:id', async (c) => {
+  const u = await exigirLogin(c.req);
+  const id = Number(c.params.id);
+  if (c.corpo.aceitar) {
+    await q("UPDATE seguidores SET estado='ativo' WHERE seguidor=$1 AND seguido=$2 AND estado='pedido'", [id, u.id]);
+    evento(id, 'seguir');
+    notificar([id], { titulo: 'Pedido aceito', corpo: u.nome + ' aceitou seu pedido para seguir.', url: '#perfil-' + u.id, tag: 'seguir-ok' });
+  } else await q("DELETE FROM seguidores WHERE seguidor=$1 AND seguido=$2 AND estado='pedido'", [id, u.id]);
+  return { ok: true };
+});
+rota('GET', '/api/usuario/:id/lista', async (c) => {
+  const u = await exigirLogin(c.req);
+  const d = await usuarioPorId(Number(c.params.id));
+  if (!d || !(await podeVer(u, d))) throw erro(403, 'Este perfil é privado');
+  const seguidores = c.url.searchParams.get('tipo') !== 'seguindo';
+  const rows = await q(seguidores
+    ? "SELECT seguidor AS x FROM seguidores WHERE seguido=$1 AND estado='ativo' ORDER BY criado DESC LIMIT 100"
+    : "SELECT seguido AS x FROM seguidores WHERE seguidor=$1 AND estado='ativo' ORDER BY criado DESC LIMIT 100", [d.id]);
+  const out = []; for (const r of rows) { const o = await usuarioPorId(r.x); if (o && !o.banido) out.push(publico(o)); }
+  return out;
+});
+rota('POST', '/api/professor/confiavel', async (c) => {
+  const u = await exigirLogin(c.req); exigirProfessor(u);
+  await q('UPDATE usuarios SET confiavel=$1 WHERE id=$2 AND admin=0', [c.corpo.confiavel ? 1 : 0, Number(c.corpo.id)]);
+  return { ok: true };
+});
+
+// ---------- desafios e metas ----------
+const METRICAS = { xp: 'pontos', missao: 'missões', post: 'posts publicados', comentario: 'comentários', curtida: 'curtidas dadas', seguir: 'pessoas seguidas' };
+function inicioSemana(t = agora()) { return semanaId(t) * 7 * DIA_MS + 4 * DIA_MS + 3 * 3600000; }
+function inicioDia(t = agora()) { return Date.parse(diaStr(t) + 'T00:00:00Z') + 3 * 3600000; }
+function desafiosFixos() {
+  const sem = semanaId(), ini = inicioSemana(), fimS = ini + 7 * DIA_MS, dia = diaStr(), ind = inicioDia();
+  const S = (k, titulo, metrica, meta, moedas) => ({ chave: 's' + sem + ':' + k, tipo: 'semana', titulo, metrica, meta, moedas, ini, fim: fimS });
+  return [
+    { chave: 'd' + dia + ':xp40', tipo: 'dia', titulo: 'Meta do dia: 40 pontos', metrica: 'xp', meta: 40, moedas: 3, ini: ind, fim: ind + DIA_MS },
+    S('xp200', 'Estudioso da semana: 200 pontos', 'xp', 200, 20),
+    S('mis6', 'Complete 6 missões', 'missao', 6, 25),
+    S('post1', 'Publique 1 post, reel ou story', 'post', 1, 10),
+    S('com3', 'Comente em 3 posts dos colegas', 'comentario', 3, 5),
+    S('seg3', 'Siga 3 colegas', 'seguir', 3, 5),
+  ];
+}
+async function progressoDesafio(uid, d) {
+  return Number((await q('SELECT COALESCE(SUM(valor),0) AS n FROM eventos WHERE usuario=$1 AND tipo=$2 AND criado>=$3 AND criado<$4', [uid, d.metrica, d.ini, d.fim]))[0].n);
+}
+async function todosDesafios() {
+  const fixos = desafiosFixos();
+  const custom = (await q('SELECT * FROM desafios WHERE ativo=1 AND fim>$1 ORDER BY id DESC LIMIT 20', [agora()])).map((d) => ({ chave: 'c' + d.id, tipo: 'professor', titulo: d.titulo, metrica: d.metrica, meta: d.meta, moedas: d.moedas, ini: d.inicio, fim: d.fim, id: d.id }));
+  return custom.concat(fixos);
+}
+rota('GET', '/api/desafios', async (c) => {
+  const u = await exigirLogin(c.req);
+  const lista = [];
+  for (const d of await todosDesafios()) {
+    const prog = await progressoDesafio(u.id, d);
+    const resg = (await q('SELECT 1 AS x FROM desafio_resg WHERE chave=$1 AND usuario=$2', [d.chave, u.id])).length > 0;
+    lista.push({ chave: d.chave, tipo: d.tipo, titulo: d.titulo, unidade: METRICAS[d.metrica], meta: d.meta, progresso: Math.min(prog, d.meta), moedas: d.moedas, resgatado: resg, fim: d.fim, id: d.id });
+  }
+  return lista;
+});
+rota('POST', '/api/desafios/resgatar', async (c) => {
+  const u = await exigirLogin(c.req); exigirPublicar(u);
+  limitar('desr:' + u.id, 30, 3600000);
+  const d = (await todosDesafios()).find((x) => x.chave === String(c.corpo.chave));
+  if (!d) throw erro(404, 'Desafio encerrado');
+  if ((await progressoDesafio(u.id, d)) < d.meta) throw erro(400, 'Você ainda não completou este desafio');
+  try { await q('INSERT INTO desafio_resg (chave, usuario, criado) VALUES ($1,$2,$3)', [d.chave, u.id, agora()]); } catch (e) { throw erro(409, 'Recompensa já resgatada'); }
+  return privado((await q('UPDATE usuarios SET gemas=gemas+$1 WHERE id=$2 RETURNING *', [d.moedas, u.id]))[0]);
+});
+rota('POST', '/api/professor/desafio', async (c) => {
+  const u = await exigirLogin(c.req); exigirProfessor(u);
+  const titulo = validarTexto(c.corpo.titulo, 60), metrica = String(c.corpo.metrica);
+  if (!METRICAS[metrica]) throw erro(400, 'Tipo de meta inválido');
+  const meta = Math.max(1, Math.min(10000, parseInt(c.corpo.meta, 10) || 0)), dias = Math.max(1, Math.min(60, parseInt(c.corpo.dias, 10) || 7)), moedas = Math.max(1, Math.min(200, parseInt(c.corpo.moedas, 10) || 10));
+  await q('INSERT INTO desafios (titulo, metrica, meta, inicio, fim, moedas) VALUES ($1,$2,$3,$4,$5,$6)', [titulo, metrica, meta, agora(), agora() + dias * DIA_MS, moedas]);
+  return { ok: true };
+});
+rota('DELETE', '/api/professor/desafio/:id', async (c) => {
+  const u = await exigirLogin(c.req); exigirProfessor(u);
+  await q('UPDATE desafios SET ativo=0 WHERE id=$1', [Number(c.params.id)]);
+  return { ok: true };
+});
+
+// ---------- chamadas de áudio e vídeo (WebRTC; o servidor só troca os sinais de conexão) ----------
+const TOQUE_MS = 45000;
+rota('GET', '/api/chamada/config', async (c) => {
+  await exigirLogin(c.req);
+  const ice = [{ urls: 'stun:stun.l.google.com:19302' }, { urls: 'stun:stun1.l.google.com:19302' }];
+  if (process.env.TURN_URL) ice.push({ urls: process.env.TURN_URL.split(','), username: process.env.TURN_USER || '', credential: process.env.TURN_PASS || '' });
+  return { iceServers: ice };
+});
+async function chamadaDe(u, id) {
+  const ch = (await q('SELECT * FROM chamadas WHERE id=$1', [id]))[0];
+  if (!ch || (ch.de !== u.id && ch.para !== u.id)) throw erro(404, 'Chamada não encontrada');
+  if (ch.estado === 'chamando' && agora() - ch.criado > TOQUE_MS) { await q("UPDATE chamadas SET estado='perdida', fim=$1 WHERE id=$2", [agora(), ch.id]); ch.estado = 'perdida'; }
+  return ch;
+}
+rota('POST', '/api/chamada', async (c) => {
+  const u = await exigirLogin(c.req); exigirPublicar(u);
+  limitar('cham:' + u.id, 20, 3600000);
+  const tipo = c.corpo.tipo === 'video' ? 'video' : 'audio';
+  const o = await usuarioPorId(Number(c.corpo.para));
+  if (!o || o.banido || o.id === u.id) throw erro(400, 'Aluno inválido');
+  const mutuo = u.admin || o.admin || ((await segue(u.id, o.id)) && (await segue(o.id, u.id)));
+  if (!mutuo) throw erro(403, 'Chamadas só entre quem se segue (os dois precisam se seguir).');
+  const ocupado = await q("SELECT id FROM chamadas WHERE (de IN ($1,$2) OR para IN ($1,$2)) AND ((estado='chamando' AND criado>$3) OR (estado='aceita' AND criado>$4))", [u.id, o.id, agora() - TOQUE_MS, agora() - 3 * 3600000]);
+  if (ocupado.length) throw erro(409, 'Uma das pessoas já está em uma chamada.');
+  const r = await q('INSERT INTO chamadas (de, para, tipo, criado) VALUES ($1,$2,$3,$4) RETURNING *', [u.id, o.id, tipo, agora()]);
+  notificar([o.id], { titulo: (tipo === 'video' ? '🎥 Chamada de vídeo' : '📞 Chamada de áudio') + ' de ' + u.nome, corpo: 'Toque para atender', url: '#chamada', tag: 'chamada' });
+  return { id: r[0].id, tipo };
+});
+rota('GET', '/api/chamada/pendente', async (c) => {
+  const u = await exigirLogin(c.req);
+  const ch = (await q("SELECT * FROM chamadas WHERE para=$1 AND estado='chamando' AND criado>$2 ORDER BY id DESC LIMIT 1", [u.id, agora() - TOQUE_MS]))[0];
+  if (!ch) return { chamada: null };
+  const d = await usuarioPorId(ch.de);
+  return { chamada: { id: ch.id, tipo: ch.tipo, de: publico(d) } };
+});
+rota('GET', '/api/chamada/:id', async (c) => {
+  const u = await exigirLogin(c.req);
+  const ch = await chamadaDe(u, Number(c.params.id));
+  return { id: ch.id, tipo: ch.tipo, estado: ch.estado, euLigo: ch.de === u.id };
+});
+rota('POST', '/api/chamada/:id/responder', async (c) => {
+  const u = await exigirLogin(c.req);
+  const ch = await chamadaDe(u, Number(c.params.id));
+  if (ch.para !== u.id || ch.estado !== 'chamando') throw erro(409, 'Esta chamada não está mais tocando');
+  await q('UPDATE chamadas SET estado=$1, criado=$2 WHERE id=$3', [c.corpo.aceitar ? 'aceita' : 'recusada', agora(), ch.id]);
+  return { ok: true };
+});
+rota('POST', '/api/chamada/:id/sinal', async (c) => {
+  const u = await exigirLogin(c.req);
+  limitar('sinal:' + u.id, 600, 600000);
+  const ch = await chamadaDe(u, Number(c.params.id));
+  if (ch.estado !== 'aceita') throw erro(409, 'Chamada não está ativa');
+  const tipo = String(c.corpo.tipo), dados = String(c.corpo.dados || '');
+  if (!['offer', 'answer', 'ice'].includes(tipo) || dados.length > 12000) throw erro(400, 'Sinal inválido');
+  await q('INSERT INTO sinais (chamada, de, tipo, dados, criado) VALUES ($1,$2,$3,$4,$5)', [ch.id, u.id, tipo, dados, agora()]);
+  return { ok: true };
+});
+rota('GET', '/api/chamada/:id/sinais', async (c) => {
+  const u = await exigirLogin(c.req);
+  const ch = await chamadaDe(u, Number(c.params.id));
+  const depois = parseInt(c.url.searchParams.get('depois'), 10) || 0;
+  const rows = await q('SELECT id, tipo, dados FROM sinais WHERE chamada=$1 AND de<>$2 AND id>$3 ORDER BY id ASC LIMIT 100', [ch.id, u.id, depois]);
+  return { estado: ch.estado, sinais: rows };
+});
+rota('POST', '/api/chamada/:id/encerrar', async (c) => {
+  const u = await exigirLogin(c.req);
+  const ch = await chamadaDe(u, Number(c.params.id));
+  if (ch.estado === 'chamando') await q("UPDATE chamadas SET estado=$1, fim=$2 WHERE id=$3", [ch.de === u.id ? 'cancelada' : 'recusada', agora(), ch.id]);
+  else if (ch.estado === 'aceita') await q("UPDATE chamadas SET estado='encerrada', fim=$1 WHERE id=$2", [agora(), ch.id]);
+  return { ok: true };
+});
+
 // limpeza de áudios antigos (30 dias) para economizar espaço
 async function limparAudios() {
+  try {
+    await q("UPDATE midias SET dados=$1, tam=0 WHERE tam>0 AND id IN (SELECT midia FROM posts WHERE formato='story' AND criado<$2)", [Buffer.alloc(0), agora() - STORY_MS - 3600000]);
+    await q('DELETE FROM sinais WHERE criado<$1', [agora() - DIA_MS]);
+    await q('DELETE FROM eventos WHERE criado<$1', [agora() - 90 * DIA_MS]);
+  } catch (e) { console.error('limpeza stories:', e.message); }
   try { await q("UPDATE midias SET dados=$1, tam=0 WHERE contexto='audio' AND tam>0 AND criado<$2", [Buffer.alloc(0), agora() - 30 * DIA_MS]); } catch (e) { console.error('limpeza:', e.message); }
 }
 

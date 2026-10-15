@@ -51,6 +51,17 @@ async function iniciar() {
     id ${ID}, post BIGINT NOT NULL, de BIGINT NOT NULL, texto TEXT NOT NULL, criado BIGINT NOT NULL, apagada INTEGER NOT NULL DEFAULT 0)`);
   await q(`CREATE TABLE IF NOT EXISTS push_subs (
     endpoint TEXT PRIMARY KEY, usuario BIGINT NOT NULL, p256dh TEXT NOT NULL, auth TEXT NOT NULL, geral INTEGER NOT NULL DEFAULT 0, criado BIGINT NOT NULL)`);
+  await q(`CREATE TABLE IF NOT EXISTS seguidores (
+    seguidor BIGINT NOT NULL, seguido BIGINT NOT NULL, estado TEXT NOT NULL DEFAULT 'ativo', criado BIGINT NOT NULL, PRIMARY KEY (seguidor, seguido))`);
+  await q(`CREATE TABLE IF NOT EXISTS eventos (
+    id ${ID}, usuario BIGINT NOT NULL, tipo TEXT NOT NULL, valor INTEGER NOT NULL DEFAULT 1, criado BIGINT NOT NULL)`);
+  await q(`CREATE TABLE IF NOT EXISTS desafios (
+    id ${ID}, titulo TEXT NOT NULL, metrica TEXT NOT NULL, meta INTEGER NOT NULL, inicio BIGINT NOT NULL, fim BIGINT NOT NULL, moedas INTEGER NOT NULL, ativo INTEGER NOT NULL DEFAULT 1)`);
+  await q('CREATE TABLE IF NOT EXISTS desafio_resg (chave TEXT NOT NULL, usuario BIGINT NOT NULL, criado BIGINT NOT NULL, PRIMARY KEY (chave, usuario))');
+  await q(`CREATE TABLE IF NOT EXISTS chamadas (
+    id ${ID}, de BIGINT NOT NULL, para BIGINT NOT NULL, tipo TEXT NOT NULL, estado TEXT NOT NULL DEFAULT 'chamando', criado BIGINT NOT NULL, fim BIGINT NOT NULL DEFAULT 0)`);
+  await q(`CREATE TABLE IF NOT EXISTS sinais (
+    id ${ID}, chamada BIGINT NOT NULL, de BIGINT NOT NULL, tipo TEXT NOT NULL, dados TEXT NOT NULL, criado BIGINT NOT NULL)`);
   // Colunas novas em bancos que já existiam (erro "já existe" é ignorado)
   const novas = [
     "ALTER TABLE usuarios ADD COLUMN foto BIGINT NOT NULL DEFAULT 0",
@@ -61,6 +72,10 @@ async function iniciar() {
     "ALTER TABLE denuncias ADD COLUMN alvo TEXT NOT NULL DEFAULT 'msg'",
     "ALTER TABLE denuncias ADD COLUMN motivo TEXT NOT NULL DEFAULT ''",
     "ALTER TABLE denuncias ADD COLUMN detalhe TEXT NOT NULL DEFAULT ''",
+    "ALTER TABLE usuarios ADD COLUMN bio TEXT NOT NULL DEFAULT ''",
+    "ALTER TABLE usuarios ADD COLUMN privado INTEGER NOT NULL DEFAULT 0",
+    "ALTER TABLE usuarios ADD COLUMN confiavel INTEGER NOT NULL DEFAULT 0",
+    "ALTER TABLE posts ADD COLUMN formato TEXT NOT NULL DEFAULT 'post'",
     "ALTER TABLE denuncias ADD COLUMN resolvida INTEGER NOT NULL DEFAULT 0",
   ];
   for (const sql of novas) { try { await q(sql); } catch (e) { /* coluna já existe */ } }
@@ -68,6 +83,10 @@ async function iniciar() {
   await q('CREATE INDEX IF NOT EXISTS ix_com_post ON comentarios (post, id)');
   await q('CREATE INDEX IF NOT EXISTS ix_msg_para ON mensagens (para, id)');
   await q('CREATE INDEX IF NOT EXISTS ix_msg_de ON mensagens (de, id)');
+  await q('CREATE INDEX IF NOT EXISTS ix_seg_seguido ON seguidores (seguido, estado)');
+  await q('CREATE INDEX IF NOT EXISTS ix_ev ON eventos (usuario, tipo, criado)');
+  await q('CREATE INDEX IF NOT EXISTS ix_sinais ON sinais (chamada, id)');
+  await q('CREATE INDEX IF NOT EXISTS ix_posts_dono ON posts (dono, id)');
   await q('CREATE INDEX IF NOT EXISTS ix_xp ON usuarios (xp_semana)');
 }
 module.exports = { q, iniciar, isPg };

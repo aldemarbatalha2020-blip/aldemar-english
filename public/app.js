@@ -13,6 +13,7 @@
   var rankTipo = 'semana';
   var timerTela = null;
   var temDm = false;
+  var visitaId = 0, voltarPara = 'ranking';
   var pilulaLicao = null;
 
   function ler(k, padrao) { try { var v = localStorage.getItem(k); return v ? JSON.parse(v) : padrao; } catch (e) { return padrao; } }
@@ -123,6 +124,7 @@
     if (tela === 'jornada') main.append(telaJornada());
     else if (tela === 'ranking') telaRanking(main);
     else if (tela === 'posts') M().posts.tela(main);
+    else if (tela === 'visita') M().perfil.tela(main, visitaId, function () { tela = voltarPara; render(); });
     else if (tela === 'comunidade') telaComunidade(main);
     else if (tela === 'painel') telaPainel(main);
     else main.append(telaPerfil());
@@ -160,27 +162,13 @@
     fechar = folha(c);
   }
 
-  function folhaPessoa(id) {
-    api('GET', '/api/pessoa/' + id).then(function (p) {
-      var fechar;
-      var moedas = h('select', {}, [5, 10, 25, 50].map(function (n) { return h('option', { value: n }, n + ' moedas'); }));
-      var c = h('div', {},
-        h('div', { class: 'topo-f' }, av(p), h('div', {}, h('h3', { style: 'margin:0' }, p.nome, p.pro ? h('span', { class: 'etiqueta' }, 'PRO') : null, p.professor ? h('span', { class: 'etiqueta prof' }, 'PROFESSOR') : null),
-          h('div', { class: 'mudo peq' }, p.xp + ' pontos · 🔥 ' + p.streak + ' · ' + p.missoes + ' missões'))));
-      if (p.id !== U.id) {
-        c.append(h('div', { class: 'opcoes-f' },
-          h('button', { class: 'btn', onclick: function () { fechar(); tela = 'comunidade'; subCom = 'conversa'; conversaCom = p; render(); } }, '💬 Conversar'),
-          h('button', { class: 'btn ouro', disabled: p.pro, onclick: function () {
-            api('POST', '/api/presente', { para: p.id, tipo: 'energia' }).then(function (u) { aplicar(u); fechar(); render(); aviso('⚡ Energia enviada para ' + p.nome + '!'); }).catch(falha);
-          } }, p.pro ? 'Aluno Pro já tem energia ilimitada' : '⚡ Dar 1 de energia (10 🪙)'),
-          h('div', { style: 'display:flex;gap:8px' }, moedas, h('button', { class: 'btn ciano mini', style: 'white-space:nowrap', onclick: function () {
-            api('POST', '/api/presente', { para: p.id, tipo: 'moedas', qtd: Number(moedas.value) }).then(function (u) { aplicar(u); fechar(); render(); aviso('🪙 Moedas enviadas para ' + p.nome + '!'); }).catch(falha);
-          } }, 'Dar moedas'))));
-        if (p.foto && !p.professor) c.append(h('button', { class: 'link', onclick: function () { fechar(); M().mod.folhaDenuncia('perfil', p.id); } }, '🚩 Denunciar esta foto de perfil'));
-      } else c.append(h('p', { class: 'mudo' }, 'Este é você!'));
-      fechar = folha(c);
-    }).catch(falha);
+  function abrirPerfil(id) {
+    if (id === (U && U.id)) { tela = 'perfil'; render(); window.scrollTo(0, 0); return; }
+    if (tela !== 'visita') voltarPara = tela === 'painel' ? 'painel' : tela;
+    visitaId = id; tela = 'visita'; if (licaoEl) return; render(); window.scrollTo(0, 0);
   }
+  function folhaPessoa(id) { abrirPerfil(id); }
+  function conversar(p) { tela = 'comunidade'; subCom = 'conversa'; conversaCom = p; render(); window.scrollTo(0, 0); }
 
   // ---------- autenticação ----------
   function telaAuth() {
@@ -236,6 +224,7 @@
   function telaJornada() {
     var wrap = h('div');
     wrap.append(h('div', { class: 'saudacao' }, h('h2', {}, 'Olá, ' + U.nome + '! ' + U.avatar), h('div', { class: 'mudo' }, 'Nível ' + (Math.floor(U.xp / 100) + 1) + ' · ' + U.xp + ' pontos · meta de hoje ' + Math.min(U.xpHoje, 50) + '/50')));
+    if (M().desafios) wrap.append(M().desafios.cartao());
     var achouAtual = false;
     CURSO.forEach(function (u) {
       var feitas = u.lessons.filter(function (l, i) { return U.progresso[chaveMissao(u, i)]; }).length;
@@ -335,7 +324,10 @@
   }
   function telaConversa(main) {
     main.append(h('button', { class: 'voltar', onclick: function () { subCom = 'conversas'; render(); } }, '← Conversas'),
-      h('div', { class: 'topo-f', style: 'display:flex;gap:10px;align-items:center;margin-bottom:8px' }, av(conversaCom), h('h2', {}, conversaCom.nome)));
+      h('div', { class: 'topo-f', style: 'display:flex;gap:10px;align-items:center;margin-bottom:8px' },
+        h('button', { class: 'semfundo', onclick: function () { abrirPerfil(conversaCom.id); } }, av(conversaCom)), h('h2', { style: 'flex:1;margin:0' }, conversaCom.nome),
+        h('button', { class: 'btn sec mini', 'aria-label': 'Chamada de áudio', onclick: function () { M().chamada.ligar(conversaCom, 'audio'); } }, '📞'),
+        h('button', { class: 'btn sec mini', 'aria-label': 'Chamada de vídeo', onclick: function () { M().chamada.ligar(conversaCom, 'video'); } }, '🎥')));
     montarChat(main, '/api/conversa/' + conversaCom.id, '/api/conversa/' + conversaCom.id);
   }
   function montarChat(main, urlGet, urlPost) {
@@ -354,6 +346,11 @@
         var nota = h('div', { class: 'mudo peq' });
         au.addEventListener('error', function () { au.style.display = 'none'; nota.textContent = 'Áudio expirado (apagado após 30 dias).'; });
         conteudo = h('div', { class: 'txt audio' }, au, nota);
+      } else if (m.tipo === 'foto') {
+        var im = h('img', { src: '/api/midia/' + m.midia, alt: 'foto', loading: 'lazy' });
+        var env = h('div', { class: 'foto-chat' + (minha ? '' : ' borrada'), onclick: function () { env.classList.remove('borrada'); } }, im, minha ? null : h('span', { class: 'ver' }, 'Toque para ver'));
+        im.addEventListener('error', function () { env.replaceChildren(h('div', { class: 'mudo peq' }, 'Foto removida.')); });
+        conteudo = h('div', { class: 'txt audio' }, env);
       } else conteudo = h('div', { class: 'txt' }, m.texto);
       var el = h('div', { class: 'bolha' + (minha ? ' minha' : '') },
         h('button', { class: 'semfundo', onclick: function () { folhaPessoa(m.de.id); } }, av(m.de)),
@@ -370,8 +367,16 @@
       var t = inp.value.trim(); if (!t) return; inp.value = '';
       api('POST', urlPost, { texto: t }).then(function (m) { receber([m], true); }).catch(function (e) { inp.value = t; falha(e); });
     }
+    var arq = h('input', { type: 'file', accept: 'image/*', style: 'display:none' });
+    arq.addEventListener('change', function () {
+      var f = arq.files && arq.files[0]; arq.value = ''; if (!f) return;
+      aviso('Enviando foto…');
+      M().midia.processarImagem(f, 1024, false, 0.78).then(function (b) { return M().midia.enviar('chatfoto', b); })
+        .then(function (r) { return api('POST', urlPost, { tipo: 'foto', midia: r.id }); }).then(function (m) { receber([m], true); }).catch(falha);
+    });
+    var btnFoto = h('button', { class: 'btn sec mini mic', 'aria-label': 'Enviar foto', onclick: function () { arq.click(); } }, '📷');
     inp.addEventListener('keydown', function (e) { if (e.key === 'Enter') enviar(); });
-    main.append(caixa, h('div', { class: 'envio' }, grav, inp, h('button', { class: 'btn', onclick: enviar }, 'Enviar')));
+    main.append(caixa, h('div', { class: 'envio' }, arq, btnFoto, grav, inp, h('button', { class: 'btn', onclick: enviar }, 'Enviar')));
     api('GET', urlGet).then(function (ms) { receber(ms, true); }).catch(function (e) { caixa.replaceChildren(h('p', { class: 'mudo' }, e.status === 0 ? 'Conecte-se à internet para conversar.' : e.message)); });
     timerTela = setInterval(function () {
       api('GET', urlGet + '?depois=' + ultimo).then(function (ms) {
@@ -393,12 +398,9 @@
   function telaPerfil() {
     var total = 0, feitas = 0;
     CURSO.forEach(function (u) { u.lessons.forEach(function (l, i) { total++; if (U.progresso[chaveMissao(u, i)]) feitas++; }); });
-    var c = h('div', {},
-      h('div', { class: 'card', style: 'display:flex;gap:14px;align-items:center' },
-        h('button', { class: 'semfundo', 'aria-label': 'Trocar foto ou avatar', onclick: folhaAvatar }, av(U, 'grande')),
-        h('div', { style: 'flex:1' }, h('h3', { style: 'margin:0' }, U.nome, U.pro ? h('span', { class: 'etiqueta' }, 'PRO') : null, U.professor ? h('span', { class: 'etiqueta prof' }, 'PROFESSOR') : null),
-          h('div', { class: 'mudo peq' }, 'Nível ' + (Math.floor(U.xp / 100) + 1) + ' · ' + (U.xp % 100) + '/100 para o próximo'), U.fotoPend ? h('div', { class: 'mudo peq' }, '⏳ Foto aguardando aprovação') : null,
-          h('div', { class: 'barra', style: 'margin-top:8px' }, h('i', { style: 'width:' + (U.xp % 100) + '%' })))),
+    var topoP = h('div', { class: 'card' });
+    M().perfil.montar(topoP, U.id);
+    var c = h('div', {}, topoP,
       h('div', { class: 'grade' },
         h('div', { class: 'card' }, h('div', { class: 'num' }, '🔥 ' + U.streak), h('div', { class: 'mudo peq' }, 'dias seguidos')),
         h('div', { class: 'card' }, h('div', { class: 'num' }, '⭐ ' + U.xp), h('div', { class: 'mudo peq' }, 'pontos')),
@@ -455,13 +457,14 @@
             }).catch(falha);
           } }, 'Gerar códigos'), novos,
           p.codigos.filter(function (k) { return !k.usado; }).length ? h('div', {}, h('p', { class: 'mudo peq' }, 'Disponíveis (ainda não usados):'), p.codigos.filter(function (k) { return !k.usado; }).map(function (k) { return h('span', { class: 'codigo', title: k.dias + ' dias' }, k.codigo); })) : null));
-        area.append(M().mod.cartaoPendentes(p, carregar), M().mod.cartaoDenuncias(p, carregar), M().mod.cartaoArmazenamento(p));
+        area.append(M().mod.cartaoPendentes(p, carregar), M().mod.cartaoDenuncias(p, carregar), M().desafios.cartaoProfessor(), M().mod.cartaoArmazenamento(p));
         area.append(h('div', { class: 'card' }, h('h3', {}, 'Alunos (' + p.alunos.length + ')'),
           p.alunos.map(function (a) {
             return h('div', { class: 'tabela-p' },
-              h('div', { class: 'info' }, a.avatar + ' ', h('b', {}, a.nome), a.pro ? h('span', { class: 'etiqueta' }, 'PRO') : null, a.banido ? h('span', { class: 'etiqueta', style: 'background:var(--coral)' }, 'SILENCIADO') : null,
+              h('div', { class: 'info' }, a.avatar + ' ', h('b', {}, a.nome), a.confiavel ? h('span', { class: 'etiqueta', style: 'background:var(--roxo)' }, '⭐') : null, a.pro ? h('span', { class: 'etiqueta' }, 'PRO') : null, a.banido ? h('span', { class: 'etiqueta', style: 'background:var(--coral)' }, 'SILENCIADO') : null,
                 h('div', { class: 'mudo peq' }, a.xp + ' pts · 🔥 ' + a.streak + (a.visto ? ' · visto ' + dataBr(a.visto) : ''))),
               h('div', { class: 'acoes' },
+                h('button', { class: 'btn sec mini', onclick: function () { api('POST', '/api/professor/confiavel', { id: a.id, confiavel: !a.confiavel }).then(function () { aviso(a.confiavel ? 'Removido de confiança.' : 'Aluno de confiança: publica sem aprovação prévia.'); carregar(); }).catch(falha); } }, a.confiavel ? '⭐ Tirar' : '☆ Confiar'),
                 h('button', { class: 'btn sec mini', onclick: function () { api('POST', '/api/professor/pro', { id: a.id, dias: a.pro ? -1 : 30 }).then(function () { aviso(a.pro ? 'Pro removido.' : 'Pro ativado por 30 dias.'); carregar(); }).catch(falha); } }, a.pro ? 'Tirar Pro' : '+30d Pro'),
                 h('button', { class: 'btn mini ' + (a.banido ? 'ciano' : 'sec'), onclick: function () { api('POST', '/api/professor/silenciar', { id: a.id, silenciar: !a.banido }).then(function () { aviso(a.banido ? 'Aluno reativado.' : 'Aluno silenciado.'); carregar(); }).catch(falha); } }, a.banido ? 'Reativar' : 'Silenciar')));
           })));
@@ -657,6 +660,7 @@
   var pollando = false;
   function iniciarPolling() {
     if (pollando) return; pollando = true;
+    if (M().chamada) M().chamada.vigiar();
     setInterval(function () {
       if (!U || offline || document.hidden) return;
       var desde = ler('ae_dm_visto', 0);
@@ -675,12 +679,15 @@
   window.addEventListener('offline', function () { if (U) { offline = true; if (!licaoEl) render(); } });
 
   // ---------- ligação com os módulos ----------
-  window.AE = { h: h, add: add, api: api, aplicar: aplicar, aviso: aviso, falha: falha, folha: folha, av: av, hora: hora, dataBr: dataBr, contagem: contagem, render: render, falar: falar, pessoa: folhaPessoa };
+  window.AE = { h: h, add: add, api: api, aplicar: aplicar, aviso: aviso, falha: falha, folha: folha, av: av, hora: hora, dataBr: dataBr, contagem: contagem, render: render, falar: falar, pessoa: abrirPerfil, perfil: abrirPerfil, conversar: conversar };
   Object.defineProperty(window.AE, 'U', { get: function () { return U; } });
 
   // abre uma tela a partir do endereço (#dm-5, #posts...) — usado pelas notificações
   function irPara(hash) {
     if (!U || !hash) return;
+    var mp = /^#post-(\d+)$/.exec(hash), mv = /^#perfil-(\d+)$/.exec(hash);
+    if (mp) { M().posts.abrirPorId(mp[1]); history.replaceState(null, '', location.pathname); return; }
+    if (mv) { abrirPerfil(Number(mv[1])); history.replaceState(null, '', location.pathname); return; }
     var m = /^#dm-(\d+)$/.exec(hash);
     if (m) {
       api('GET', '/api/pessoa/' + m[1]).then(function (p) { if (licaoEl) return; tela = 'comunidade'; subCom = 'conversa'; conversaCom = p; render(); }).catch(function () { /* ok */ });

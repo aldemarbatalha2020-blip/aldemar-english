@@ -25,26 +25,26 @@
   }
 
   // Vídeo curto (até 30 s). Se for grande, é regravado em 480p direto no aparelho.
-  function processarVideo(file, aoProgredir) {
-    var MAX_S = 30;
+  function processarVideo(file, aoProgredir, maxS) {
+    var MAX_S = maxS || 30;
     return new Promise(function (ok, falha) {
       var url = URL.createObjectURL(file), v = document.createElement('video');
       v.muted = true; v.playsInline = true; v.preload = 'auto'; v.src = url;
       function fim(erro, blob) { URL.revokeObjectURL(url); if (erro) falha(erro); else ok(blob); }
       v.onerror = function () { fim(new Error('Não foi possível ler este vídeo')); };
       v.onloadedmetadata = function () {
-        if (v.duration > MAX_S + 0.5) return fim(new Error('O vídeo tem mais de ' + MAX_S + ' segundos. Escolha um mais curto.'));
+        if (v.duration > MAX_S + 0.5) return fim(new Error('O vídeo tem mais de ' + (MAX_S >= 60 ? Math.floor(MAX_S / 60) + ' min' + (MAX_S % 60 ? ' ' + (MAX_S % 60) + ' s' : '') : MAX_S + ' segundos') + '. Escolha um mais curto.'));
         if (file.size <= 6 * 1024 * 1024) return fim(null, file);
         var cap = v.captureStream || v.mozCaptureStream;
         var tipos = ['video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm'];
         var tipo = window.MediaRecorder ? tipos.filter(function (t) { return MediaRecorder.isTypeSupported(t); })[0] : null;
-        if (!cap || !tipo) return file.size <= 14 * 1024 * 1024 ? fim(null, file) : fim(new Error('Este vídeo é grande demais (limite 15 MB) e seu navegador não consegue reduzi-lo. Grave um vídeo mais curto.'));
+        if (!cap || !tipo) return file.size <= 14 * 1024 * 1024 ? fim(null, file) : fim(new Error('Este vídeo é grande demais (limite 20 MB) e seu navegador não consegue reduzi-lo. Grave um vídeo mais curto.'));
         var esc = Math.min(1, 480 / Math.min(v.videoWidth || 480, v.videoHeight || 480));
         var cw = Math.max(2, Math.round((v.videoWidth || 480) * esc / 2) * 2), ch = Math.max(2, Math.round((v.videoHeight || 480) * esc / 2) * 2);
         var cv = document.createElement('canvas'); cv.width = cw; cv.height = ch;
         var cx = cv.getContext('2d'), stream = cv.captureStream(24), raf = 0, partes = [];
         try { cap.call(v).getAudioTracks().forEach(function (t) { stream.addTrack(t); }); } catch (e) { /* sem áudio */ }
-        var rec = new MediaRecorder(stream, { mimeType: tipo, videoBitsPerSecond: 1200000, audioBitsPerSecond: 64000 });
+        var rec = new MediaRecorder(stream, { mimeType: tipo, videoBitsPerSecond: 900000, audioBitsPerSecond: 64000 });
         rec.ondataavailable = function (e) { if (e.data && e.data.size) partes.push(e.data); };
         rec.onstop = function () {
           cancelAnimationFrame(raf);

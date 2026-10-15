@@ -1,5 +1,5 @@
-const VERSAO = 'ae-v3';
-const ARQUIVOS = ['/', '/index.html', '/style.css', '/data.js', '/midia.js', '/posts.js', '/moderacao.js', '/notif.js', '/teoria.js', '/app.js', '/manifest.webmanifest', '/icons/icon-192.png', '/icons/icon-512.png'];
+const VERSAO = 'ae-v4';
+const ARQUIVOS = ['/', '/index.html', '/style.css', '/data.js', '/midia.js', '/posts.js', '/moderacao.js', '/notif.js', '/teoria.js', '/perfil.js', '/chamada.js', '/desafios.js', '/app.js', '/manifest.webmanifest', '/icons/icon-192.png', '/icons/icon-512.png'];
 self.addEventListener('install', (e) => {
   e.waitUntil(caches.open(VERSAO).then((c) => c.addAll(ARQUIVOS)).then(() => self.skipWaiting()));
 });
@@ -36,6 +36,6 @@ self.addEventListener('notificationclick', (e) => {
   e.waitUntil((async () => {
     const abertos = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
     if (abertos.length) { const c = abertos[0]; await c.focus(); c.postMessage({ abrir: url }); return; }
-    await self.clients.openWindow('/' + url);
+    await self.clients.openWindow('/' + (url === '#chamada' ? '' : url));
   })());
 });
